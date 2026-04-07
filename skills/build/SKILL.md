@@ -1,6 +1,6 @@
 ---
 name: build
-description: Use when starting any feature development, building new functionality, implementing a design, or going from idea to working code. Triggers on "build", "implement", "add feature", or any task requiring design-through-execution.
+description: Entry point for feature development — planning, designing, or building new functionality. Orchestrates the full pipeline: interactive design with investigation agents → acceptance tests → PRD → autonomous plan + review → team-based execution with per-task review → final quality gates. Invoke at the START of any feature request — phrases like "plan X", "design X", "let's build X", "implement X", "how should we approach X", "let's work on X", "add feature Y", "extend Y" — before exploring code, sketching options, or calling TeamCreate directly. TeamCreate is Phase 3 of this skill, not an alternative to it. Do not use for bugfixes (use gen-*-bugfix), questions (answer inline), or one-line edits.
 ---
 
 # Build
