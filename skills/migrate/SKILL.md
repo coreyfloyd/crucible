@@ -7,6 +7,9 @@ description: "Autonomous migration planning and execution. Takes a migration tar
 
 ## Overview
 
+<!-- CANONICAL: shared/dispatch-convention.md -->
+All subagent dispatches use disk-mediated dispatch. See `shared/dispatch-convention.md` for the full protocol.
+
 Autonomous migration planning and execution: analyzes a migration target, maps blast radius, decomposes into safe phases with compatibility layers, groups consumers into waves, then executes through build's refactor/feature mode with verification at each phase boundary.
 
 **Announce at start:** "Running migrate on [migration target description]."
@@ -176,6 +179,19 @@ Recovery procedure:
 
 ---
 
+## Pipeline-Active Marker
+
+Before any dispatch work, check for a crashed prior migration session:
+
+1. **Check `<scratch>/.pipeline-active`** (where `<scratch>` is `~/.claude/projects/<hash>/memory/`)
+2. **Not found:** Write the pipeline-active marker (JSON with `pipeline_id` set to current session ID, `skill` set to `"migrate"`, `phase` set to `"0"`, `start_time` set to current ISO-8601 timestamp, `scratch_dir` and `dispatch_dir` paths, `branch` from `git branch --show-current`, `baseline_sha` from `git rev-parse HEAD`). Proceed to Phase 0.
+3. **Found, same `pipeline_id`:** Compaction recovery (existing behavior). Do not re-write the marker.
+4. **Found, different `pipeline_id`:** Previous migration session crashed. Check marker's `branch` against current branch — if mismatched, warn the user which branch the crashed session was on. Present to user:
+   > "Previous migration session on branch [marker.branch] crashed. Start fresh? [yes]"
+   Delete the stale marker. Write a fresh marker. Proceed to Phase 0. (Full replay orchestration for migrate is deferred -- detection and cleanup only for now.)
+
+**Marker cleanup:** Delete `.pipeline-active` after Phase 8 (Cleanup) completes successfully.
+
 ## Phase 0: Pre-flight
 
 Before any agent dispatch:
@@ -183,6 +199,19 @@ Before any agent dispatch:
 1. **Consult cartographer** (consult mode) -- load known module boundaries for blast radius mapping
 2. **Consult forge** (feed-forward) -- check past lessons, especially prior migration outcomes
 3. **Handle `--execute`** -- if specified, read the existing plan file, validate it has the expected structure (phases, consumer registry, rollback points), and skip to Phase 7.
+4. **Dispatch recon** with consumer-registry module:
+
+   ```
+   /recon
+     task: "Map structure and consumers for migration: <migration target>"
+     context: { target: "<migration-target-symbol>" }
+     modules: ["consumer-registry"]
+   ```
+
+   Write recon's Investigation Brief to `scratch/<run-id>/recon-brief.md`. Write recon's Consumer Registry section to `scratch/<run-id>/consumer-registry-from-recon.md`.
+
+   **On recon failure:** "Recon failed: [reason]. Blast Radius Mapper will discover consumers from scratch." Proceed without recon context -- Phase 2 falls back to full consumer discovery (existing behavior).
+
 5. **Write invocation.md** to scratch directory with migration target, mode, and scope.
 
 ---
@@ -216,10 +245,14 @@ Dispatch the **Migration Analyzer** (Opus, Agent tool, Explore subagent) using `
 
 Dispatch the **Blast Radius Mapper** (Sonnet, Agent tool, general-purpose) using `./blast-radius-mapper-prompt.md`.
 
-**Input:** Migration analysis from Phase 1, cartographer module data (if available).
+**Input:** Migration analysis from Phase 1, cartographer module data (if available), recon consumer registry (if available from Phase 0).
+
+**When recon's consumer registry is available:** The mapper receives pre-discovered direct consumers and focuses on transitive dependencies, test coverage, and configuration/wiring. Direct consumer discovery is skipped -- the mapper verifies and augments the registry instead.
+
+**When recon's consumer registry is NOT available (recon failed):** The mapper falls back to full discovery (existing behavior).
 
 **Intra-repo mapping** (follows build refactor mode's blast radius analysis pattern):
-- **Direct consumers** -- code that imports/calls/references the migration target
+- **Direct consumers** -- from recon's consumer registry (or discovered from scratch if recon failed)
 - **Indirect dependents** -- code that depends on direct consumers (transitive)
 - **Test coverage** -- which tests exercise the target behavior
 - **Configuration/wiring** -- config files, DI registrations, build scripts referencing the target
@@ -263,6 +296,20 @@ Each phase entry includes:
 - Safe stopping point verification criteria
 - Dependencies on prior phases
 
+### Legacy Migration Patterns
+
+The planner must verify the phase plan against these operational patterns. These address the human and organizational side of migration that the technical decomposition doesn't cover.
+
+1. **Map the territory first** — Understand what the legacy system *actually does*, not what it was designed to do. Hidden workflows, tribal knowledge in column headers, undocumented behaviors ARE the requirements spec. If `/recon` with `consumer-registry` was run, the technical mapping exists — but the planner should flag operational unknowns (manual processes, workarounds, tribal knowledge) as risks requiring user confirmation before cutover phases.
+
+2. **Build alongside, not on top of** — The new system must run in parallel with the old. Both are live during migration. Users try the new while the old is a safety net. The phase plan must include a **coexistence period** — never require a hard cutover without one. If Phase 2 (compatibility layer) was skipped, the planner must justify why parallel operation is unnecessary.
+
+3. **Cut over by group, not by system** — Migration happens one team/department at a time, not all at once. The phase plan should identify **rollout groups** (who moves when) in addition to technical phases. Wave 3a-3N should map to user groups, not just code modules.
+
+4. **Don't migrate data unless you must** — Historical data in the old system is fine where it is. The new system starts capturing from day one. If historical queries are needed, build a read-only bridge. The planner should flag any data migration phases as **high-risk** and verify that data migration is genuinely required (not just assumed).
+
+5. **Kill the old system explicitly** — The phase plan must include an explicit **decommission step**: archive the old system and remove access. "Still available just in case" systems never die. This should be the final phase, with clear criteria for when it triggers (last user migrated, parallel period complete, no fallback queries in N days).
+
 **Output:** `scratch/<run-id>/phase-plan.md`
 
 ---
@@ -305,7 +352,20 @@ For cross-repo migrations: each wave entry includes repo name, estimated effort 
 
 ## User Gate
 
-After Phase 5, the orchestrator consolidates all outputs into `scratch/<run-id>/migration-plan.md` and presents the complete plan:
+After Phase 5, the orchestrator consolidates all outputs into `scratch/<run-id>/migration-plan.md`.
+
+Before presenting the plan to the user, dispatch `/assay` for structured strategy evaluation:
+
+```
+/assay
+  question: "Is this migration approach the best strategy for <migration target>?"
+  context: { recon brief + migration analysis + blast radius summary }
+  decision_type: "strategy"
+```
+
+**On assay failure:** "Assay evaluation failed: [reason]. Presenting plan without structured evaluation." Present the plan without assay's scoring (existing behavior).
+
+Present the complete plan:
 
 ```
 ### Migration Plan: [target description]
@@ -315,6 +375,10 @@ After Phase 5, the orchestrator consolidates all outputs into `scratch/<run-id>/
 **Consumer waves:** M
 **Estimated total effort:** [estimate]
 **Cross-repo scope:** [yes/no, N repos]
+
+**Strategy Confidence:** [from assay — high/medium/low]
+**Kill Criteria:** [from assay — when to abort this migration approach]
+**Missing Information:** [from assay — what would increase confidence]
 
 #### Phase Summary
 [table of phases with descriptions, affected files, effort, build mode]
@@ -333,7 +397,7 @@ After Phase 5, the orchestrator consolidates all outputs into `scratch/<run-id>/
 
 **On approval:** Save the plan to `docs/plans/YYYY-MM-DD-<topic>-migration-plan.md`. If `--plan-only` mode: stop here, report success.
 
-**Quality gate:** Dispatch `crucible:quality-gate` on the migration plan with artifact type "plan". Iterate until clean or stagnation.
+**REQUIRED SUB-SKILL:** Use crucible:quality-gate on the migration plan with artifact type "plan". Iterate until clean or stagnation. **(Non-negotiable — see Quality Gate Requirement.)**
 
 ---
 
@@ -402,6 +466,7 @@ Cleanup is a distinct phase because premature shim removal is the most common mi
 **Post-cleanup:**
 - Dispatch `crucible:cartographer` (record mode) -- record migration discoveries
 - Dispatch `crucible:forge` (retrospective) -- capture migration outcome and lessons
+- Delete `.pipeline-active` marker from the scratch directory
 
 ---
 
@@ -431,6 +496,8 @@ Escalate to the user when:
 
 | Skill | How Used | When |
 |-------|----------|------|
+| `crucible:recon` | Consumer-registry module | Phase 0 (structural context + direct consumer discovery). Fallback: Blast Radius Mapper discovers consumers from scratch. |
+| `crucible:assay` | Strategy evaluation | User Gate (structured evaluation of migration approach with kill criteria). Fallback: present plan without assay scoring. |
 | `crucible:cartographer` | Consult mode | Phase 0 (module boundaries for blast radius) |
 | `crucible:cartographer` | Record mode | Phase 8 (record migration discoveries) |
 | `crucible:forge` | Feed-forward | Phase 0 (past migration lessons) |
@@ -450,6 +517,18 @@ Escalate to the user when:
 - `./compatibility-designer-prompt.md` -- Phase 4 shim/adapter design
 - `./wave-grouper-prompt.md` -- Phase 5 consumer wave assignment
 
+## Quality Gate Requirement (Non-Negotiable)
+
+**Every quality gate in this pipeline MUST run to completion.** This is NOT optional — you may NOT self-assess whether a quality gate is "needed" based on migration step size, complexity, or perceived mechanical nature.
+
+Migration work is especially vulnerable to "this is mechanical/boilerplate" rationalization. Mechanical changes still introduce bugs — mismatched imports, forgotten call sites, subtle behavioral differences in new APIs. Quality gates catch these regardless of how "simple" the migration step appears.
+
+**Fixing findings is NOT the same as passing the gate.** The iteration loop must complete with a clean verification round (0 Fatal, 0 Significant on a fresh review).
+
+**The only valid skip** is an unambiguous user instruction specifically referencing the gate. General feedback is not skip approval.
+
+**Gate tracking:** Before compiling the migration summary, verify gate round counts by category: `plan` (Phase 5), `code-per-phase` (Phase 7, one entry per executed phase), `cleanup` (Phase 8). Each must show round count >= 1 with clean final rounds. If any gate was skipped with explicit user approval, record it as `USER_SKIP`. A zero without user approval indicates a gate was dropped — report this in the summary.
+
 ## Quality Gate Orchestration
 
 | Pipeline Stage | Artifact Type | Purpose |
@@ -457,3 +536,18 @@ Escalate to the user when:
 | After Phase 5 (plan consolidation) | plan | Verify migration plan completeness, phase boundary safety |
 | Phase 7 (per-phase, after build completes) | code | Verify phase implementation correctness |
 | Phase 8 (after cleanup) | code | Verify clean removal of compatibility layer |
+
+## Red Flags
+
+**Quality gate violations:**
+- Skipping a quality gate because the migration step is "mechanical" or "boilerplate"
+- Self-assessing that a quality gate is unnecessary based on perceived migration step simplicity
+- Declaring a quality gate "done" after fixing findings without a clean verification round (fixing is not passing)
+- Short-circuiting the quality-gate iteration loop by assuming fixes are self-evidently correct
+- Interpreting general user feedback as approval to skip a quality gate that has not yet run
+
+**Compression State violations:**
+- Skipping Compression State Block emission at checkpoint boundaries
+- Emitting a Compression State Block with stale or missing Key Decisions (decisions must be cumulative across all prior blocks)
+- Allowing the Goal field to drift across successive Compression State Blocks (must match original user request)
+- Exceeding 10 entries in the Key Decisions list without overflow-compressing the oldest

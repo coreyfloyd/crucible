@@ -7,6 +7,9 @@ description: Use when encountering any bug, test failure, or unexpected behavior
 
 ## Overview
 
+<!-- CANONICAL: shared/dispatch-convention.md -->
+All subagent dispatches use disk-mediated dispatch. See `shared/dispatch-convention.md` for the full protocol.
+
 Random fixes waste time and create new bugs. Quick patches mask underlying issues.
 
 **Core principle:** ALWAYS find root cause before attempting fixes. Symptom fixes are failure.
@@ -105,6 +108,7 @@ After compaction, before re-writing the status file:
 1. Read the rest of `pipeline-status.md` to recover `Started` timestamp and `Recent Events` buffer
 2. Reconstruct phase, health, and skill-specific body from internal state files (see Session State below)
 3. Emit a Compression State Block into the conversation to seed the new context window
+3.5. **Read session index summary (supplementary):** If the CSB Scratch State contains a `Session Index:` path, or if globbing `~/.claude/projects/<hash>/memory/session-index/*/summary.md` finds a recent file, read `summary.md`. Include the Activity Timeline, Files Modified, and Key Decisions sections in the post-compaction narration. If no session index exists, skip silently — this step is purely additive. If `summary.md` lacks detail for a specific event type (e.g., errors, hypothesis changes, file modifications), use `/recall` to query `events.jsonl` with filters for targeted recovery.
 4. Write the updated status file
 5. Output inline status to CLI
 
@@ -143,7 +147,7 @@ Emit a Compression State Block at:
 5. Read `where-else-state.md` (if exists) for Phase 4.5 progress — which siblings have been fixed, which remain.
 6. Output status to user and continue from the current phase.
 
-**Cleanup:** Delete scratch directory after debugging completes (Phase 5 passes clean or escalation to user).
+**Cleanup:** Delete scratch directory and `.pipeline-active` marker after debugging completes (Phase 5 passes clean or escalation to user).
 
 ### Phase Handoff Manifest
 
@@ -283,9 +287,22 @@ Done.
 
 ---
 
+### Phase -1: Pipeline-Active Marker Check
+
+Before any dispatch work, check for a crashed prior debugging session:
+
+1. **Check `<scratch>/.pipeline-active`** (where `<scratch>` is `~/.claude/projects/<hash>/memory/`)
+2. **Not found:** Write the pipeline-active marker (JSON with `pipeline_id` set to current session ID, `skill` set to `"debugging"`, `phase` set to `"0"`, `start_time` set to current ISO-8601 timestamp, `scratch_dir` and `dispatch_dir` paths, `branch` from `git branch --show-current`, `baseline_sha` from `git rev-parse HEAD`). Proceed to Phase 0.
+3. **Found, same `pipeline_id`:** Compaction recovery (existing behavior). Do not re-write the marker.
+4. **Found, different `pipeline_id`:** Previous debugging session crashed. Check marker's `branch` against current branch — if mismatched, warn the user which branch the crashed session was on. Present to user:
+   > "Previous debugging session on branch [marker.branch] crashed. Start fresh? [yes]"
+   Delete the stale marker. Write a fresh marker. Proceed to Phase 0. (Full replay orchestration for debugging is deferred -- detection and cleanup only for now.)
+
+**Marker cleanup:** Delete `.pipeline-active` after debugging completes (Phase 5 passes clean or escalation to user), alongside the existing scratch directory cleanup.
+
 ### Phase 0: Load Codebase Context
 
-**Before any investigation dispatch,** use `crucible:cartographer` (load mode) to pull module context for the area being investigated. If module files exist, paste them into every investigator's prompt so agents start with structural knowledge instead of wasting turns rediscovering the codebase.
+**Before any investigation dispatch,** use `crucible:cartographer` (load mode) to pull module context for the area being investigated. If module files exist, include them in every investigator's dispatch file so agents start with structural knowledge instead of wasting turns rediscovering the codebase.
 
 **Defect signature loading (for investigators):**
 1. Glob `defect-signatures/*.md` (excluding `*.non-matches.md`) from the cartographer storage directory
@@ -737,7 +754,11 @@ This is user-gated, not automatic. The orchestrator does not decide whether to l
 
 Throughout the debugging session, the orchestrator appends timestamped entries to `/tmp/crucible-metrics-<session-id>.log`.
 
-At completion, compute and report:
+**Dispatch measurement protocol:** On every subagent dispatch, the orchestrator follows the enriched manifest protocol from `shared/dispatch-convention.md`:
+- **Before dispatching:** Measure the dispatch file size in characters. Record `input_chars` and `model_tier` in the manifest entry.
+- **After dispatch returns:** Measure the subagent response length in characters. Record `output_chars` and `tool_calls` (if available) in the manifest completion entry.
+
+At completion, read the metrics log and manifest, then compute and report:
 
 ```
 -- Debugging Complete ---------------------------------------
@@ -746,10 +767,15 @@ At completion, compute and report:
   Wall clock time:       3h 42m
   Hypothesis cycles:     3
   Quality gate rounds:   2 (hypothesis: 1, fix: 1)
+  Est. input tokens:    ~15,200 (60,800 chars)
+  Est. output tokens:   ~9,800 (39,200 chars)
+  Token estimate note:  Based on dispatch file sizes (chars/4). Actual consumption may vary +/-30%.
 -------------------------------------------------------------
 ```
 
 Additional debugging metric: **hypothesis cycles** (number of hypothesis → investigate → implement cycles before resolution).
+
+**Efficiency summary computation:** Read `manifest.jsonl` from the dispatch directory. Sum `input_chars` and `output_chars` across all completed entries (skip nulls). Divide each by 4 for token estimates. Count dispatches grouped by `model_tier`. Include these in the debugging completion report alongside existing metrics.
 
 ### Pipeline Decision Journal
 
@@ -855,7 +881,15 @@ This is NOT a failed hypothesis -- this is a wrong architecture. Discuss with yo
 
 ## Quality Gate
 
-This skill produces **hypotheses** (Phase 3.5) and **fixes** (Phase 5). When used standalone, quality gate is invoked at Phase 3.5 (on hypotheses) and Phase 5 (on fixes). When used as a sub-skill, the parent orchestrator may handle gating.
+This skill produces **hypotheses** (Phase 3.5) and **fixes** (Phase 5).
+
+**When used standalone:** Debugging is the outermost orchestrator and MUST invoke quality-gate at Phase 3.5 (on hypotheses) and Phase 5 (on fixes). These gates are non-negotiable regardless of fix size — a "one-liner" fix is not exempt.
+
+**When used as a sub-skill:** The parent orchestrator is responsible for dispatching gates (per the Invocation Convention: "Skills NEVER self-invoke quality-gate"). If you are unsure whether you are standalone or a sub-skill, invoke the gate — double-gating is preferable to no gating.
+
+**The only legitimate skip** is at Phase 5 when there is no code change (bug was already resolved). Do not extrapolate from this — it applies only to the specific "no code change" scenario, not to "small" or "trivial" changes.
+
+**Gate tracking:** Before declaring done, verify that Phase 3.5 (hypothesis gate) and Phase 5 (fix gate, unless legitimately skipped for no-code-change) each show round count >= 1 with clean final rounds. If any gate was skipped with explicit user approval, record it as `USER_SKIP`.
 
 ---
 
@@ -885,6 +919,14 @@ If you catch yourself thinking:
 - **"One more fix attempt" (when already at Cycle 3+)**
 - **Each fix reveals new problem in different place**
 
+**Quality gate violations:**
+- "This fix is too small to need a quality gate"
+- "It's just a one-liner, the gate won't find anything"
+- Skipping Phase 3.5 or Phase 5 quality gate without explicit user approval
+- Declaring a quality gate "done" after fixing findings without a clean verification round (fixing is not passing)
+- Extrapolating from the "no code change" skip to justify skipping on small changes
+- Interpreting general user feedback as approval to skip a quality gate that has not yet run
+
 **Compression State violations:**
 - Skipping Compression State Block emission at checkpoint boundaries
 - Emitting a Compression State Block at a major phase boundary (0→1, Synthesis→3, 3.5→4, 4.5→5) instead of writing a handoff manifest
@@ -892,6 +934,7 @@ If you catch yourself thinking:
 - Emitting a Compression State Block with stale or missing Key Decisions (decisions must be cumulative across all prior blocks)
 - Allowing the Goal field to drift across successive Compression State Blocks (must match original user request)
 - Exceeding 10 entries in the Key Decisions list without overflow-compressing the oldest
+- Treating session index summary as authoritative over CSB state (session index is supplementary narrative, CSB is authoritative state)
 
 **ALL of these mean: STOP. Return to the correct phase.**
 
@@ -970,6 +1013,8 @@ If systematic investigation reveals issue is truly environmental, timing-depende
 - **`crucible:quality-gate`** -- Adversarial review in Phase 5 (iteration tracking, stagnation detection, compaction recovery)
 - **`crucible:red-team`** -- Invoked indirectly via quality-gate (stagnation detection pattern also used in loop-back)
 - **`crucible:test-coverage`** -- Phase 5 Step 2.5: audit existing tests for staleness, needed updates, or removal after the fix (if available)
+
+**Does not dispatch /recon or /assay** -- uses specialized investigation agents (Error Analysis, Change Analysis, Evidence Gathering, Reproduction) that are categorically different from structural investigation. Hypothesis evaluation uses quality-gate, not assay. See #147 for rationale.
 
 **Required skills:**
 - **`crucible:cartographer`** -- Phase 0: load module context for investigators and defect signatures. Phase 4 completion: record discoveries. Phase 4.5 completion: persist defect signature via recorder dispatch.

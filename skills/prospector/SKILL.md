@@ -5,6 +5,9 @@ description: "Explore a codebase for architectural friction and propose competin
 
 # Prospector
 
+<!-- CANONICAL: shared/dispatch-convention.md -->
+All subagent dispatches use disk-mediated dispatch. See `shared/dispatch-convention.md` for the full protocol.
+
 Explores a codebase organically, surfaces architectural friction, and proposes competing redesigns for the user to choose from.
 
 **Announce at start:** "Running prospector on [codebase/directory name]."
@@ -705,6 +708,7 @@ After context compaction:
 - **Complementary to:** `crucible:audit` — audit finds bugs, prospector finds structural improvements. Run prospector before audit when both are planned.
 - **Called by:** Standalone only (user invokes directly)
 - **Does NOT use:** `crucible:quality-gate` (prospector is advisory, not a fix loop), `crucible:red-team`
+- **Does not dispatch /recon** -- organic exploration serves a different purpose than structured investigation. Does not dispatch /assay -- competing design evaluation is more specialized than assay for this use case. See #147 for rationale.
 
 ## Subagent Dispatch Summary
 

@@ -7,6 +7,9 @@ description: Use when you need adversarial review of any artifact — design doc
 
 ## Overview
 
+<!-- CANONICAL: shared/dispatch-convention.md -->
+All subagent dispatches use disk-mediated dispatch. See `shared/dispatch-convention.md` for the full protocol.
+
 Adversarial review of any artifact. Dispatches a Devil's Advocate subagent to attack the work, fixes findings, then dispatches a FRESH Devil's Advocate to attack again. Iterates until clean or stagnation is detected.
 
 **Core principle:** Fresh eyes every round. No anchoring, no confirmation bias.
@@ -82,7 +85,7 @@ The Devil's Advocate MUST classify every challenge:
 ### 2. Dispatch Devil's Advocate
 
 Use the `red-team-prompt.md` template in this directory. Provide:
-- The full artifact content (paste it, don't make the subagent read files)
+- The full artifact content (include in dispatch file, don't make the subagent read files)
 - Project context (existing systems, constraints, tech stack)
 - What the artifact is supposed to accomplish
 
@@ -166,6 +169,20 @@ Red-team operates in two modes depending on the caller:
 **When invoked directly** (e.g., by `crucible:finish` or standalone): Run the **full iterative loop** with stagnation detection, fix dispatch, and escalation as described above.
 
 **Multi-model consensus:** When invoked by quality-gate on consensus-eligible rounds, quality-gate handles the multi-model dispatch via the consensus MCP tool. Red-team itself does not call consensus — the quality-gate orchestrator substitutes a consensus call for the red-team dispatch on eligible rounds. When invoked standalone, red-team uses single-model dispatch only.
+
+## External Model Review (Optional)
+
+**Direct invocation only.** When operating in single-pass mode (invoked by quality-gate), skip this section entirely — quality-gate handles its own external review integration.
+
+After dispatching the host red-team subagent, call the `external_review` MCP tool with:
+- `prompt`: contents of `skills/shared/external-review-prompt.md`
+- `context`: same artifact + attack prompt context provided to the host reviewer
+- `skill`: `"red_team"` (top-level argument for per-skill toggle enforcement)
+- `metadata`: `{"skill": "red_team"}` (traceability)
+
+**Per-skill toggle:** The server checks the `skill` argument against `skills.red_team` in the external review config. Only active if set to `true`. If the `external_review` MCP tool is unavailable or the call fails, skip silently and proceed with host findings only.
+
+Append external perspectives after the host Devil's Advocate findings in the output. External findings use the same Fatal/Significant/Minor classification but are **informational only** — they do NOT count toward stagnation scoring (INV-2). Only host red-team findings drive the scoring algorithm.
 
 ## Integration
 

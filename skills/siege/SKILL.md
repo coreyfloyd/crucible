@@ -13,6 +13,9 @@ Full-lifecycle security audit. Dispatches 6 parallel Opus agents across distinct
 
 **Model:** All SECURITY ANALYSIS agents are Opus, no exceptions. Orchestrator, all 6 attacker-perspective agents, synthesis, and fix dispatch are Opus. Support functions (manifest scoping, stagnation judging, fix verification) may use Sonnet where the task is mechanical rather than analytical. If the session is not running Opus, refuse: "Siege requires Opus for all security analysis agents. Cannot proceed on a lesser model."
 
+<!-- CANONICAL: shared/dispatch-convention.md -->
+All subagent dispatches use disk-mediated dispatch. See `shared/dispatch-convention.md` for the full protocol.
+
 ## Why This Exists
 
 Audit finds bugs, robustness gaps, and architecture issues. Quality-gate iterates artifacts to convergence. Inquisitor hunts cross-component integration bugs. None of these operate from an attacker's perspective. Security is a discipline -- it requires threat modeling, attack surface enumeration, exploitation scenario analysis, and chain-of-vulnerability reasoning that generalist review skills are not equipped to perform. A robustness finding ("missing input validation") and a security finding ("this missing validation enables SQL injection via the /api/users endpoint, escalating to full database read") are categorically different in blast radius, urgency, and remediation strategy.
@@ -37,6 +40,8 @@ Audit finds bugs, robustness gaps, and architecture issues. Quality-gate iterate
 
 ## Activation Heuristic
 
+<!-- CANONICAL: shared/security-signals.md — consumption-optimized keyword lists for build/spec/audit -->
+
 ### Content-Aware Detection
 
 Siege activates when the orchestrator (build, audit, or user session) encounters **two or more** of these high-risk signals in the target artifact:
@@ -51,24 +56,68 @@ Siege activates when the orchestrator (build, audit, or user session) encounters
 
 A single signal is insufficient -- too many false positives. Two or more signals, or any signal combined with user confirmation, activates Siege at full force.
 
+### Parameters
+
+**`deployment_context`** (optional) — `intranet` | `public` | `hybrid`
+
+Declares the deployment environment for context-aware severity adjustment.
+
+| Context | Effect on Severity |
+|---|---|
+| `intranet` | Network-level findings downgraded by 1 level (Critical→High, High→Medium, etc.). Application-level findings unchanged. |
+| `public` | No adjustment (default behavior) |
+| `hybrid` | Same as `public` — no blanket adjustment. Use `public` when any endpoints face the internet. Intranet downgrade only applies when ALL endpoints are internal. |
+| *(unset)* | Assumes `public` (worst-case, no change from v1) |
+
+**Network-level findings** (eligible for intranet downgrade): anonymous endpoints, TLS/transport gaps, CORS misconfiguration, port exposure, security header gaps, rate limiting gaps.
+
+**Application-level findings** (NEVER downgraded): injection, auth bypass, IDOR, data exposure, privilege escalation, business logic flaws, deserialization, SSRF.
+
+Severity adjustments are applied during Phase 3 synthesis (not by agents). Every downgrade is logged: "Downgraded [ID] from [original] to [adjusted] due to intranet deployment context." Original severity preserved in finding metadata.
+
+When `deployment_context` is not specified but exists in the persistent threat model, use the persisted value: "Using deployment context from threat model: {context}. Override with explicit parameter." Explicit parameter overrides persisted value and updates the threat model.
+
+**`attack_mapping`** (optional) — boolean, default `false`
+
+When `true`: Chain Analyst annotates chain steps with MITRE ATT&CK technique IDs. Other agents are unaffected. When `false` (default): no ATT&CK references anywhere. Behavior identical to v1.
+
 ### Escape Hatches
 
 - `--force` -- Activate Siege regardless of heuristic (user explicitly wants security review)
 - `--skip` -- Suppress Siege activation even when heuristic triggers (user explicitly declines)
 - When audit detects security surfaces during its Phase 2 analysis, it may recommend: "Security surfaces detected. Run `/siege` for full security audit." This is a recommendation, not automatic invocation.
 
-### Binary Execution
+## Pipeline Integration
 
-Once activated, Siege runs at maximum force. There is no "light mode" or "quick scan." The iterative gate and threat model update always execute. The cost of a missed security vulnerability in production dwarfs the cost of a thorough review.
+<!-- CANONICAL: shared/security-signals.md -->
+Siege integrates with orchestrator skills via `shared/security-signals.md`, which codifies the 7-category activation heuristic in a consumption-optimized format:
+
+- **crucible:build** — Phase 4 Step 5.5 checks for siege activation signals in the implementation diff and design doc. If 2+ signals detected (or contract specifies `security_review: required`), siege is dispatched automatically. Critical/High findings block the pipeline identically to quality-gate Fatal/Significant.
+- **crucible:spec** — Step 3.5 scans ticket content for signals during contract generation. Adds `security_review: required|recommended` to the contract YAML, which build consumes.
+- **crucible:audit** — Existing recommendation behavior unchanged. Audit may still recommend siege when it detects security surfaces.
+
+When dispatched from build, siege receives:
+- Artifact type: `mixed` (design doc + implementation diff)
+- `deployment_context`: from contract `security_review.deployment_context` if present, else defaults to `public`
+- Scope: determined by siege's own scope-based agent count heuristic (3/4/6 agents based on file count)
+
+Build's escape hatches (`--force-siege`, `--skip-siege`) map to siege's `--force` and `--skip` flags respectively.
+
+### Execution Intensity
+
+Siege scales its agent count to match the scope. Rigor is constant — every tier runs the full iterative gate and threat model update. What changes is agent count, because overlapping perspectives on a small target produce noise, not coverage.
 
 ### Scope-Based Agent Count
 
 | Scope | Agents | Rationale |
 |-------|--------|-----------|
-| Single subsystem (<20 files) | 4: Boundary Attacker, Insider Threat, Fresh Attacker, Chain Analyst | Focused target — 6 perspectives produce ~60% overlap. 4 agents capture the same findings with less noise. |
+| Targeted change (<5 files, single concern) | 3: Boundary Attacker, Fresh Attacker, Chain Analyst | Surgical target — more perspectives restate the same findings. Boundary catches injection/input flaws, Fresh breaks epistemic closure, Chain catches cross-boundary paths. |
+| Single subsystem (5-19 files) | 4: Boundary Attacker, Insider Threat, Fresh Attacker, Chain Analyst | Focused target — 6 perspectives produce ~60% overlap. 4 agents capture the same findings with less noise. |
 | Multi-subsystem (20+ files) | 6: all agents | Broader target — distinct perspectives cover different services/components. |
 
-Fresh Attacker and Chain Analyst always run regardless of scope. They are the differentiators — the Fresh Attacker breaks epistemic closure and the Chain Analyst finds multi-step exploits. The scope heuristic only affects whether Infrastructure Prober and Betrayed Consumer are included.
+Fresh Attacker and Chain Analyst always run regardless of scope. They are the differentiators — the Fresh Attacker breaks epistemic closure and the Chain Analyst finds multi-step exploits. The scope heuristic only affects whether domain-specific agents (Insider Threat, Infrastructure Prober, Betrayed Consumer) are included.
+
+**Scope override:** User may force a specific tier with `--agents 3|4|6`. The default is auto-detected from the manifest.
 
 ## Commit Anchor (TOCTOU Prevention)
 
@@ -118,6 +167,95 @@ Determine the artifact type and build the target manifest.
 
 **USER GATE:** Present the manifest and intelligence summary to the user. "Siege scope: [N files]. Intelligence: [summary of findings]. Proceed?" User may adjust scope. Write `scratch/<run-id>/gate-approved.md` on confirmation.
 
+### Step 2.5: Attack Surface Enumeration (Outside-In Recon)
+
+Before agents are dispatched, enumerate the application's externally reachable endpoints via static pattern matching. This builds an "actually exposed" map independent of the file manifest, then cross-references the two to surface coverage gaps. Runs at orchestrator level (Sonnet) -- no agent dispatch.
+
+**Artifact-type guard:** Step 2.5 requires source files to grep. Skip entirely for `design` and `plan` artifact types (no code to scan). Run only for `code` and `mixed`. Note in scope limitations: "Attack surface enumeration skipped -- artifact type [design|plan] has no source files to scan."
+
+**Sub-step A -- Framework Detection:**
+
+Scan manifest files and project configuration to detect which web framework(s) the project uses:
+
+| Signal | Framework |
+|--------|-----------|
+| `package.json` with `express` dependency | Express.js |
+| `package.json` with `fastify` dependency | Fastify |
+| `package.json` with `@nestjs/core` dependency | NestJS |
+| `package.json` with `next` dependency | Next.js |
+| `requirements.txt` or `pyproject.toml` with `flask` | Flask |
+| `requirements.txt` or `pyproject.toml` with `fastapi` | FastAPI |
+| `requirements.txt` or `pyproject.toml` with `django` | Django |
+| `*.csproj` with `Microsoft.AspNetCore` | ASP.NET Core |
+| `Gemfile` with `rails` | Rails |
+| `pom.xml` or `build.gradle` with `spring-boot` | Spring Boot |
+| `go.mod` with `gin-gonic/gin` | Gin (Go) |
+| `go.mod` with `gorilla/mux` | Gorilla Mux (Go) |
+| `Cargo.toml` with `actix-web` | Actix Web (Rust) |
+
+If no framework is detected, skip the rest of Step 2.5 and note in scope limitations: "No recognized web framework detected -- attack surface enumeration skipped." Multiple frameworks: enumerate all.
+
+**Sub-step B -- Route/Endpoint Enumeration:**
+
+For each detected framework, grep project files using these patterns to extract registered routes:
+
+| Framework | Grep Pattern | Example Match |
+|-----------|-------------|---------------|
+| Express.js | `(app\|router)\.(get\|post\|put\|patch\|delete\|all\|use)\s*\(` | `app.get('/api/users', ...)` |
+| Fastify | `(fastify\|server)\.(get\|post\|put\|patch\|delete\|all)\s*\(` | `fastify.post('/login', ...)` |
+| NestJS | `@(Get\|Post\|Put\|Patch\|Delete\|All)\s*\(` | `@Get('users/:id')` |
+| Next.js | Files under `app/` or `pages/api/` (convention-based routing) | `app/api/users/route.ts` |
+| Flask | `@(app\|blueprint)\.(route\|get\|post\|put\|delete)\s*\(` | `@app.route('/login', methods=['POST'])` |
+| FastAPI | `@(app\|router)\.(get\|post\|put\|patch\|delete)\s*\(` | `@router.get('/items/{id}')` |
+| Django | `path\(\s*['"]` or `url\(\s*['"]` in `urls.py` files | `path('api/users/', views.user_list)` |
+| ASP.NET Core | `\[Http(Get\|Post\|Put\|Patch\|Delete)\]` or `\[Route\(` or `Map(Get\|Post\|Put\|Delete)\(` | `[HttpGet("api/users/{id}")]` |
+| Rails | `(get\|post\|put\|patch\|delete\|resources\|resource)\s` in `config/routes.rb` | `resources :users` |
+| Spring Boot | `@(GetMapping\|PostMapping\|PutMapping\|PatchMapping\|DeleteMapping\|RequestMapping)\s*\(` | `@GetMapping("/api/users")` |
+| Gin (Go) | `(r\|router\|group)\.(GET\|POST\|PUT\|PATCH\|DELETE\|Any)\s*\(` | `r.GET("/api/users", ...)` |
+| Gorilla Mux (Go) | `(r\|router)\.HandleFunc\s*\(` | `r.HandleFunc("/api/users", handler)` |
+| Actix Web (Rust) | `\.(route\|resource)\s*\(` or `#\[(get\|post\|put\|patch\|delete)\]` | `#[get("/api/users")]` |
+
+For each match, extract: HTTP method (or "ANY" if indeterminate), route path (raw string), source file path, line number, framework name.
+
+**Auth-signal heuristic (best-effort):** For each endpoint, scan surrounding context (same file, same route registration block) for auth middleware or decorator patterns: `[Authorize]`, `@RequireAuth`, `authenticate`, `isAuthenticated`, `requireLogin`, `@login_required`, `@permission_required`, `auth_guard`, `AuthGuard`, `before_action :authenticate`. Classify each endpoint as `auth: yes | no | unknown`. This is approximate -- false negatives are expected (auth applied at router level may not appear near the route). The classification feeds the exposure map's "Auth" column and helps prioritize: `auth: no` endpoints are highest priority for Boundary Attacker partitioning.
+
+**Limitations (documented in exposure map):**
+- Dynamic route registration (method/path from variables) is not captured
+- Middleware-only mounts (e.g., `app.use('/api', ...)`) are recorded as "middleware mount", not individual endpoints
+- Convention-based routing (Next.js file-based, Rails `resources` expansion) produces approximate routes
+- Auth-signal heuristic is best-effort: router-level or middleware-chain auth may not appear near the route definition, producing false `auth: unknown` classifications
+
+**Sub-step C -- Exposure Map and Cross-Reference:**
+
+Build the exposure map and cross-reference with `manifest.md`:
+
+1. For each enumerated endpoint, check if its source file appears in the manifest
+2. Endpoints whose source file is NOT in the manifest are flagged as **coverage gaps**
+3. Gap files are automatically appended to `manifest.md` with the tag `[attack-surface-gap]`. Log each addition: "Attack surface gap: added [file] to manifest ([N] endpoints not in original scope)." This is post-USER-GATE, so the user sees what changed before agent dispatch.
+4. Write the full exposure map to `scratch/<run-id>/exposure-map.md`:
+
+```markdown
+# Attack Surface Exposure Map
+**Framework(s):** [detected frameworks]
+**Enumeration method:** Static pattern matching
+**Endpoint count:** [N]
+
+## Endpoints
+| # | Method | Route | File | Line | Auth | In Manifest |
+|---|--------|-------|------|------|------|-------------|
+| 1 | GET | /api/users | src/controllers/UserController.ts | 42 | yes | Yes |
+| 2 | DELETE | /admin/purge | src/admin/maintenance.ts | 88 | no | NO -- GAP |
+
+## Coverage Gaps
+- `/admin/purge` (src/admin/maintenance.ts:88) -- file not in Siege manifest
+[list all gaps]
+
+## Scope Limitations
+[framework-specific limitations from sub-step B]
+```
+
+**Line budget:** The exposure map summary appended to Tier 1 context (Step 1 of Automated Context Assembly) is capped at **15 lines**: endpoint count, gap count, and the gap list. The full endpoint table remains in `scratch/<run-id>/exposure-map.md` only.
+
 ### Step 3: Load Persistent Threat Model
 
 Read `~/.claude/projects/<project-hash>/memory/security-audit/threat-model.md` if it exists. Extract:
@@ -141,6 +279,7 @@ Adopts audit's tiered context model with security-specific partitioning.
 - Intelligence summary (50 lines, from Step 1)
 - Prior threat context (30 lines, from Step 3)
 - Trust boundary diagram (if available from threat model)
+- Exposure map summary (15 lines, from Step 2.5 -- endpoint count, gap count, gap list)
 - Target: **300 lines**. Flexible up to 500 for complex multi-service architectures.
 
 **Tier 2 -- Deep dive (per-agent partitioning):**
@@ -156,6 +295,38 @@ Adopts audit's tiered context model with security-specific partitioning.
 | `plan` | Full plan (up to 500 lines) | Referenced existing code that the plan modifies (partitioned by agent relevance) |
 | `code` | Manifest + interfaces + dependency graph | Source files partitioned by security domain (auth files to Insider Threat, input handling to Boundary Attacker, etc.) |
 | `mixed` | Design/plan as context | Code partitioned as above |
+
+#### Automated Context Assembly Procedure
+
+The orchestrator builds context programmatically. Manual file reading and pasting is an anti-pattern.
+
+**Step 1 — Build Tier 1 (once, shared):**
+1. Read the manifest from `scratch/<run-id>/manifest.md`
+2. Read `scratch/<run-id>/intelligence-summary.md`
+3. If threat model exists, extract Trust Boundaries and Attack Surfaces sections (30-line budget)
+4. If `scratch/<run-id>/exposure-map.md` exists, extract exposure map summary: endpoint count, gap count, and gap file list (15-line budget). Append to the Tier 1 block so all agents know what is externally reachable.
+5. Concatenate into a single Tier 1 block. If >500 lines, summarize the manifest to file-name + role (one line each)
+6. Write to `scratch/<run-id>/tier1-context.md`
+
+**Step 2 — Build Tier 2 partitions (per-agent):**
+1. Calculate Tier 2 budget: `1500 - len(Tier 1) - len(prompt template) - len(intelligence)` lines
+2. For each agent, select files from the manifest using the security-domain mapping:
+   - Boundary Attacker: API routes, input parsers, URL routing, file upload handlers, deserialization. Files tagged `[attack-surface-gap]` from Step 2.5 are highest priority -- these register externally-reachable endpoints but were not in the original manifest.
+   - Insider Threat: auth middleware, RBAC, user-facing endpoints, data access layers
+   - Infrastructure Prober: config files, env handling, middleware setup, logging config, Docker/CI
+   - Betrayed Consumer: data models, serialization/response shaping, logging, session management, cache
+   - Fresh Attacker: random 40% sample (deterministic seed = hash of run-id + manifest content)
+   - Chain Analyst: trust boundary files from threat model + manifest API surface files
+3. Read selected files. If total lines exceed Tier 2 budget, include highest-priority files as full source and remainder as 2-3 line summaries
+4. Write each partition to `scratch/<run-id>/<agent>-partition.md`
+
+**Step 3 — Assemble dispatch prompt (per-agent):**
+1. Read the agent's prompt template from `./siege-<agent>-prompt.md`
+2. Substitute bracketed sections: `[PASTE: Intelligence...]` → content from `intelligence-summary.md`, `[PASTE: Subsystem Overview...]` → content from `tier1-context.md`, `[PASTE: Source Files...]` → content from `<agent>-partition.md`. Include all substituted content in the dispatch file.
+3. Verify total prompt ≤ 1500 lines. If over, truncate Tier 2 with overflow summaries
+4. Dispatch the assembled prompt — agents receive a complete, ready-to-analyze context with no manual intervention
+
+**File-type heuristic for domain mapping:** When manifest files don't have obvious security-domain labels, use filename/path patterns: `*auth*`, `*login*`, `*session*`, `*permission*` → Insider Threat; `*route*`, `*handler*`, `*controller*`, `*api*` → Boundary Attacker; `*config*`, `*.env*`, `*docker*`, `*nginx*`, `*.yml` → Infrastructure Prober; `*model*`, `*schema*`, `*log*`, `*serial*` → Betrayed Consumer. Files matching multiple domains go to all matched agents (within budget).
 
 ### The 6 Agents
 
@@ -211,6 +382,7 @@ Each agent receives a structured prompt template and outputs findings in the ini
 **Trust boundary file selection:** Trust boundary files for the Chain Analyst's Tier 2 come from the persistent THREAT MODEL (Phase 1 Step 3, Trust Boundaries section) and the MANIFEST (Phase 1 Step 2, specifically interfaces and API surface files). They are NEVER selected based on agent findings. If no prior threat model exists, trust boundary files are identified from the manifest by selecting: (a) files at module/service boundaries, (b) API route handlers and middleware, (c) authentication/authorization entry points, (d) data serialization/deserialization interfaces.
 **Input budget:** Coverage map: 40 lines max. Remaining budget after Tier 1 + coverage map goes to source files at trust boundary crossings.
 **Hunts for:** Authentication bypass chains, data flow paths that cross trust boundaries without re-validation, time-of-check/time-of-use windows exploitable by attackers, dependency chains where a compromised package enables lateral movement.
+**Anti-restatement rule:** Every chain must pass the cross-boundary test — vulnerabilities A and B must be in different files or components, connected by a concrete mechanism. A single vulnerability's consequences described in multiple steps is not a chain. Chains that fail this test are rejected.
 **Dispatch:** Runs AFTER agents 1-5 complete (needs their partition records for the coverage map). This is the only sequential dependency.
 
 **Write-on-complete:** Each agent writes findings immediately to `scratch/<run-id>/<agent>-findings.md` on completion. Partition records written to `scratch/<run-id>/<agent>-partition.md` before dispatch.
@@ -225,16 +397,40 @@ At the start of Phase 2, check whether `consensus_query` MCP tool is available. 
 
 Orchestrator reads all 6 findings files from `scratch/<run-id>/`. Steel-man-then-kill: for each finding, the orchestrator first articulates the strongest case that the finding is a false positive, then attempts to refute that case with evidence from the codebase. Findings that survive steel-manning proceed; findings that do not are demoted to "Noted" (below Minor) with the steel-man reasoning documented.
 
-1. **Mechanical dedup first:** Use the `<!-- dedup: ... -->` metadata from each finding. Same file + overlapping line range + same CWE = merge. This is fast and deterministic. Then steel-man-then-kill runs only on the deduplicated set.
+1. **Mechanical dedup (orchestrator, no agent dispatch):**
+
+   The orchestrator runs dedup before steel-manning. This is deterministic and requires no LLM reasoning.
+
+   **Step 1 — Parse:** Read all `<agent>-findings.md` files from `scratch/<run-id>/`. Extract the `<!-- dedup: file=[path] line=[start-end] cwe=[CWE-ID] agent=[agent_name] -->` metadata from each finding into a structured list.
+
+   **Step 2 — Exact dedup:** Group findings by `(file, cwe)`. Within each group, merge findings whose line ranges overlap (e.g., lines 10-25 and lines 15-30 overlap). Keep the finding with the highest severity as the primary; append other agent names as "also flagged by: [agents]". Write merged finding count to the report.
+
+   **Step 3 — Fuzzy dedup (same root cause, different CWEs):** Within the same file, findings from different agents that reference the same function or code block (overlapping line ranges, any CWE) are likely the same root cause seen from different perspectives. Group these as a "cluster" — present as a single finding with the highest severity, noting the multiple CWEs and perspectives. Example: Boundary Attacker flags CWE-89 (SQL injection) on line 42, Betrayed Consumer flags CWE-200 (information exposure) on line 44 of the same function — these are one root cause (unsanitized input reaches a query that leaks data), not two findings.
+
+   **Step 4 — Write dedup summary:** Write `scratch/<run-id>/dedup-summary.md` with: raw finding count, exact-dedup merges, fuzzy-dedup clusters, final deduplicated count. This is the set that enters steel-man-then-kill.
 1b. **Design-phase cross-reference:** If this Siege run targets code that had a prior design-phase red-team or Siege run on the design doc, check the threat model's Historical Findings for matches. Tag findings that were already flagged at design time: "Previously flagged in design review — implementation did not address." This helps triage: design-flagged findings that persist into code are higher priority than net-new findings.
-2. **Chain detection:** After dedup, scan for findings from different agents that touch the same data flow path or trust boundary. Flag as a chain ONLY when the orchestrator can articulate the specific multi-step exploitation scenario. Proximity alone is not chaining.
+2. **Chain detection:** After dedup, scan for findings from different agents that touch the same data flow path or trust boundary. Flag as a chain ONLY when the orchestrator can articulate the specific multi-step exploitation scenario. Proximity alone is not chaining. Assign exploitability to each chain using weakest-link inheritance: if any step is Hardening, the chain is Hardening. A chain is Active only when every step is independently exploitable today.
 3. **Severity classification** (no demotion without proof):
    - **Critical:** Exploitable with no authentication, or leads to full system compromise, or affects all users. Equivalent to CVSS 9.0+.
    - **High:** Exploitable with some prerequisites (valid session, specific input), significant data exposure or privilege escalation. CVSS 7.0-8.9.
    - **Medium:** Requires unlikely conditions or provides limited impact. CVSS 4.0-6.9.
    - **Low:** Theoretical, defense-in-depth improvement, or informational.
    - **Severity promotion bias:** When a finding sits between two severity levels, promote. Solo dev, silent security bugs are expensive. Demotion requires concrete proof that the exploitation scenario is infeasible (not merely unlikely).
-4. **Write initial report** to `scratch/<run-id>/report.md` using the initial lightweight finding format.
+
+   **Exploitability tag (required on every finding):**
+   Every finding must be tagged with exactly one exploitability class. This is orthogonal to severity — a High/Active is urgent, a High/Hardening is important but not on fire.
+   - **Active:** Exploitable in the current codebase without hypothetical preconditions. An attacker can trigger this today.
+   - **Hardening:** Not currently exploitable, but the design has a latent weakness that becomes exploitable if a reasonable future change occurs (e.g., a new route added without the same guard, a config flag flipped). These matter — but they are a different urgency than active vulnerabilities.
+
+   The tag appears in both the 5-line initial format and the full report format. The final report groups findings by exploitability within each severity level (Active first, then Hardening).
+4. **Deployment context severity adjustment:** When `deployment_context: intranet`, apply network-level downgrade after severity classification:
+   - Classify each finding as network-level or application-level using the categories from the Parameters section
+   - Network-level findings: downgrade severity by 1 (Critical→High, High→Medium, Medium→Low, Low→Informational)
+   - Application-level findings: no change
+   - Log each downgrade: `Downgraded [ID] from [original] to [adjusted] — intranet deployment context (network-level finding)`
+   - Preserve original severity in finding metadata: `Original-Severity: [severity]`
+   - When `deployment_context` is `public`, `hybrid`, or unset: no adjustment
+5. **Write initial report** to `scratch/<run-id>/report.md` using the initial lightweight finding format.
 
 ## Phase 4: Security Gate (Iterative Loop)
 
@@ -244,12 +440,27 @@ The security gate iterates until **zero Critical + zero High** findings remain, 
 
 Adopts quality-gate's iterative pattern with security-specific scoring.
 
-**Scoring:** Critical = 5, High = 2, Medium = 0 (medium findings are tracked but do not block the gate).
+**Scoring:** Critical = 5, High = 2, Medium = 0 (medium findings are tracked but do not block the gate). Both Active and Hardening findings contribute equally to the gate score — exploitability affects triage priority in the report, not gate blocking. A Critical/Hardening finding ("one reasonable change from full compromise") is too dangerous to pass through.
 
 **Loop:**
 1. Present findings from Phase 3 (or latest round) to the fix agent
-2. Fix agent remediates Critical and High findings (see Fix Mechanism below)
-3. Dispatch a FRESH review round: 2 agents only (Boundary Attacker + one rotating agent). The rotating agent is selected based on the security domain of files modified by the fix agent: auth/RBAC changes → Insider Threat, data/logging changes → Betrayed Consumer, config/infra changes → Infrastructure Prober, multi-domain or ambiguous → Chain Analyst. On every 3rd round, the Fresh Attacker replaces the rotating domain agent (keeping the count at 2 review agents per round). When the Fresh Attacker is included in a Phase 4 round, it receives the full fix diff plus a random sample of unchanged files from the manifest (same 40% sampling strategy as Phase 2, re-seeded for this round). This preserves its 'fresh eyes on broader context' value -- it reviews the fix AND looks for new issues the fix may have exposed in surrounding code. Full 6-agent re-dispatch is disproportionate for incremental fixes.
+2. Fix agent remediates Critical and High findings (see Fix Mechanism below). **One commit per finding** — not a batch commit. Each commit message: `fix(security): address [SIEGE-XX-N] — [title]`
+3. **Fix approval output (non-blocking):** After the fix round completes, output a per-fix commit table:
+
+   ```
+   ## Siege Fix — Round N
+
+   | # | Finding | Approach | Files | Commit |
+   |---|---------|----------|-------|--------|
+   | 1 | [SIEGE-BA-1] SQL injection | Parameterized query | UserController.cs | abc1234 |
+   | 2 | [SIEGE-IT-3] IDOR on /api/records | Added ownership check | RecordService.cs | def5678 |
+
+   **To reject a fix:** `git revert <commit-sha>` (each fix is a separate commit)
+   **To accept all:** No action needed — fixes are already applied.
+   ```
+
+   The pipeline does NOT pause. The next review round proceeds immediately with the current code state (fixes applied). If the user rejects a fix between rounds, the next review will re-find the vulnerability — this is correct behavior.
+4. Dispatch a FRESH review round: 2 agents only (Boundary Attacker + one rotating agent). The rotating agent is selected based on the security domain of files modified by the fix agent: auth/RBAC changes → Insider Threat, data/logging changes → Betrayed Consumer, config/infra changes → Infrastructure Prober, multi-domain or ambiguous → Chain Analyst. On every 3rd round, the Fresh Attacker replaces the rotating domain agent (keeping the count at 2 review agents per round). When the Fresh Attacker is included in a Phase 4 round, it receives the full fix diff plus a random sample of unchanged files from the manifest (same 40% sampling strategy as Phase 2, re-seeded for this round). This preserves its 'fresh eyes on broader context' value -- it reviews the fix AND looks for new issues the fix may have exposed in surrounding code. Full 6-agent re-dispatch is disproportionate for incremental fixes.
 4. Score the new findings. Compare to prior round:
    - Strictly lower score = progress, loop again
    - Same or higher score = dispatch Stagnation Judge
@@ -322,7 +533,7 @@ If the fix agent or user identifies a finding as a false positive:
 ### Initial Findings (Per-Agent Output) -- 5 Lines Max
 
 ```
-**[ID]** [severity] -- [title]
+**[ID]** [severity] [Active|Hardening] -- [title]
 File: [path]:[line_range] | Agent: [agent_name]
 Attack: [1-sentence exploitation scenario]
 Evidence: [specific code reference or design element]
@@ -347,7 +558,7 @@ Critical and High findings are expanded in the Phase 3 report:
 
 ```
 ### [ID]: [title]
-**Severity:** [Critical|High] | **Agent:** [agent_name] | **Chain:** [yes/no]
+**Severity:** [Critical|High] | **Exploitability:** [Active|Hardening] | **Agent:** [agent_name] | **Chain:** [yes/no]
 **File:** [path]:[line_range]
 
 **Exploitation Scenario:**
@@ -383,20 +594,27 @@ Written to `scratch/<run-id>/report.md` and presented to the user.
 ## Scope Limitations
 [What Siege cannot detect -- see Known Limitations. Always present.]
 
+## Attack Chains
+[Multi-step chains identified by Chain Analyst, with full exploitation narrative. Chains are the highest-signal output — present them first so the reviewer sees composed threats before individual findings.
+Chains inherit exploitability from their weakest link: if ANY step in the chain requires a future change to become exploitable, the entire chain is Hardening. A chain is Active only when every step is independently exploitable today.]
+
 ## Critical Findings
+### Active Vulnerabilities
+[Full report format for each, or "None"]
+### Hardening
 [Full report format for each, or "None"]
 
 ## High Findings
+### Active Vulnerabilities
+[Full report format for each, or "None"]
+### Hardening
 [Full report format for each, or "None"]
 
 ## Medium Findings
-[Initial 5-line format for each, or "None"]
+[Initial 5-line format for each, or "None". Medium and Low use the compact 5-line format which includes the exploitability tag per-finding. No Active/Hardening sub-grouping — these severities do not block the gate, so triage ordering is less critical.]
 
 ## Low Findings
 [Initial 5-line format for each, or "None"]
-
-## Attack Chains
-[Multi-step chains identified by Chain Analyst, with full exploitation narrative]
 
 ## Accepted Risks
 [Any findings the user acknowledged with rationale, or "None"]
@@ -422,19 +640,21 @@ Updated at the end of every Siege run (Phase 5). Accumulates across sessions.
 # Threat Model
 **Last updated:** [ISO-8601]
 **Last commit anchor:** [SHA]
+**Deployment context:** [intranet|public|hybrid|unset]
 
 ## Trust Boundaries
 - [boundary]: [description, files involved]
 
 ## Attack Surfaces
-- [surface]: [exposure level, last reviewed date]
+- [surface]: [exposure level, last reviewed date, source: exposure-map | manual]
+<!-- Phase 5 updates this from exposure-map.md: new endpoints not in prior model are flagged "new attack surface"; endpoints in prior model but absent from current enumeration are flagged "retired surface" in the Threat Model Delta section of the report. -->
 
 ## Historical Findings
 ### [date] -- [target]
-- [finding ID]: [severity] [title] -- [status: resolved|accepted|open]
+- [finding ID]: [severity] [Active|Hardening] [title] -- [status: resolved|accepted|open]
 
 ## Accepted Risks
-- [finding ID]: [severity] [title] -- Accepted [date] by [user]
+- [finding ID]: [severity] [Active|Hardening] [title] -- Accepted [date] by [user]
   Rationale: [user-provided rationale]
   Next review: [date, set by sentinel schedule]
 ```
@@ -527,11 +747,14 @@ The `<run-id>` is a timestamp generated at the start of Phase 1 (e.g., `2026-03-
 |------|-------------|---------|
 | `commit-anchor.md` | Phase 1 start | TOCTOU prevention |
 | `manifest.md` | Phase 1 Step 2 | Scoped file list |
+| `exposure-map.md` | Phase 1 Step 2.5 | Enumerated endpoints with manifest cross-reference |
 | `gate-approved.md` | User confirms scope | Compaction recovery marker |
 | `intelligence-summary.md` | Phase 1 Step 1 | Pre-fetched intelligence (50 lines) |
 | `<agent>-partition.md` | Before each agent dispatch | Files sent as full source |
 | `<agent>-findings.md` | On agent completion | Per-agent findings |
 | `coverage-map.md` | Before Chain Analyst dispatch | Agent coverage for chain analysis |
+| `tier1-context.md` | Phase 2 Step 1 | Shared Tier 1 context block |
+| `dedup-summary.md` | Phase 3 Step 4 | Raw → deduplicated finding counts and merge log |
 | `report.md` | Phase 3 | Synthesized findings |
 | `fix-journal.md` | Phase 4, per fix round | Cumulative fix history |
 | `round-N-score.md` | Phase 4, per round | Weighted score snapshot |
@@ -588,7 +811,7 @@ After the security gate passes (or user accepts risks and proceeds):
 
 1. Read existing `~/.claude/projects/<project-hash>/memory/security-audit/threat-model.md` (or create if first run)
 2. Merge new findings into Historical Findings (resolved findings from fix rounds, accepted risks, open items)
-3. Update Trust Boundaries and Attack Surfaces based on analysis
+3. Update Trust Boundaries and Attack Surfaces based on analysis. If `scratch/<run-id>/exposure-map.md` exists, merge its endpoints into Attack Surfaces: new endpoints not in the prior model are flagged "new attack surface"; endpoints present in the prior model but absent from the current enumeration are flagged "retired surface" in the Threat Model Delta.
 4. Record the Threat Model Delta in the report
 5. Write updated threat model to disk
 6. **Copy the final report** from `scratch/<run-id>/report.md` to `memory/security-audit/reports/<date>-<target>.md` for persistent access. Scratch directories are cleaned up on subsequent runs; the report copy ensures findings survive cleanup.
@@ -671,8 +894,9 @@ Siege effectiveness is measured by:
 **Agents must NOT:**
 - Modify any code during Phase 2 (analysis is read-only; fixes happen in Phase 4 only)
 - Flag findings without specific evidence (no "consider adding input validation" without pointing to the exact unvalidated input)
-- Exceed 5 findings per agent (focus on highest-impact; the Chain Analyst cap is 5 chains). Every finding must have a concrete, demonstrable exploitation scenario in the CURRENT codebase. Speculative findings about hypothetical future code are not findings.
+- Exceed 5 findings per agent (focus on highest-impact; the Chain Analyst cap is 5 chains). Every **Active** finding must have a concrete, demonstrable exploitation scenario in the CURRENT codebase. **Hardening** findings must name a specific, reasonable future change that would make the weakness exploitable — not hypothetical future code in general, but a concrete change (e.g., "adding a public route that calls this unguarded helper"). Speculative findings that cannot identify either a current exploit or a named future-change trigger are not findings.
 - Speculate about vulnerabilities in code they did not receive in their Tier 2 partition
+- File findings where no concrete exploitation scenario (Active or Hardening) can be constructed. If unsure, the agent should either commit to the finding (with evidence of a current exploit or a named future-change trigger) or not file it.
 
 **The orchestrator must NOT:**
 - Proceed to Phase 2 without user-confirmed manifest
@@ -687,8 +911,10 @@ Siege effectiveness is measured by:
 
 ## Red Flags
 
-- Running Siege as a "light scan" (there is no light mode -- if activated, it runs fully)
+- Running Siege below the scope-appropriate agent count (3/4/6 -- match the scope, not convenience)
 - Treating Siege findings as audit findings (security findings require exploitation scenarios, not just code quality observations)
+- Mixing active vulnerabilities and design hardening without the exploitability tag (different urgency, different reviewer response)
+- Filing findings where no exploitation scenario (Active or Hardening) can be constructed (wastes reviewer time)
 - Skipping the Chain Analyst (the most valuable agent for finding real-world exploits)
 - Accepting risks without written rationale (silent suppression)
 - Committing `threat-model.md` or `accepted-risks.md` to the repository

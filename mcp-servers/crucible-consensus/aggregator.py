@@ -3,10 +3,11 @@
 import json
 import re
 from dataclasses import dataclass, field
+from html import escape as html_escape
 from pathlib import Path
 
 from config import ConsensusConfig, ModelConfig
-from providers import AnthropicProvider, BaseProvider, ModelResponse
+from providers import BaseProvider, ModelResponse, create_provider
 
 
 class AggregationError(Exception):
@@ -17,7 +18,7 @@ class AggregationError(Exception):
 @dataclass
 class ConsensusResult:
     """Structured result from consensus aggregation."""
-    status: str  # "consensus" | "partial" | "unavailable"
+    status: str  # "complete" | "partial" | "unavailable"
     models_queried: int = 0
     models_responded: int = 0
     synthesis: str = ""
@@ -25,10 +26,11 @@ class ConsensusResult:
     disagreements: list[dict] = field(default_factory=list)
     unique_findings: list[dict] = field(default_factory=list)
     per_model: list[dict] = field(default_factory=list)
+    error: str | None = None
 
     def to_dict(self) -> dict:
         """Serialize to dict for MCP tool response."""
-        return {
+        result = {
             "status": self.status,
             "models_queried": self.models_queried,
             "models_responded": self.models_responded,
@@ -38,6 +40,9 @@ class ConsensusResult:
             "unique_findings": self.unique_findings,
             "per_model": self.per_model,
         }
+        if self.error is not None:
+            result["error"] = self.error
+        return result
 
 
 def load_aggregation_prompt(mode: str, prompts_dir: str) -> str:
@@ -84,9 +89,15 @@ def build_aggregation_input(
     parts: list[str] = []
     for r in responses:
         if r.error is None:
+            # Escape provider/model_id to prevent attribute injection,
+            # and escape content to prevent tag injection (model impersonation)
+            safe_provider = html_escape(r.provider, quote=True)
+            safe_model_id = html_escape(r.model_id, quote=True)
+            safe_content = html_escape(r.content, quote=False)
+            source_attr = f' source="{html_escape(r.source, quote=True)}"'
             parts.append(
-                f'<model provider="{r.provider}" model_id="{r.model_id}">\n'
-                f"{r.content}\n"
+                f'<model provider="{safe_provider}" model_id="{safe_model_id}"{source_attr}>\n'
+                f"{safe_content}\n"
                 f"</model>"
             )
     return "\n\n".join(parts)
@@ -120,16 +131,16 @@ def parse_aggregation_output(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Try to find a raw JSON object in the text
-    brace_match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if brace_match:
-        candidate = brace_match.group(0)
-        try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, dict) and expected_keys.issubset(parsed.keys()):
-                return parsed
-        except json.JSONDecodeError:
-            pass
+    # Try to find a raw JSON object using raw_decode (avoids greedy matching)
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(raw):
+        if ch == '{':
+            try:
+                parsed, _ = decoder.raw_decode(raw, i)
+                if isinstance(parsed, dict) and expected_keys.issubset(parsed.keys()):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
 
     # Fallback: treat entire raw text as synthesis
     return {
@@ -159,8 +170,8 @@ async def aggregate(
         config: The consensus configuration.
         prompts_dir: Directory containing aggregation prompt templates.
         aggregator_provider: Optional provider for the aggregation call.
-            If not provided, creates an AnthropicProvider from the first
-            Anthropic model in config.
+            If not provided, creates a provider from the first
+            configured model.
 
     Returns:
         A fully populated ConsensusResult.
@@ -182,7 +193,7 @@ async def aggregate(
 
     # Determine status
     if models_responded == models_queried:
-        status = "consensus"
+        status = "complete"
     elif models_responded >= config.min_models:
         status = "partial"
     else:
@@ -191,17 +202,19 @@ async def aggregate(
             models_queried=models_queried,
             models_responded=models_responded,
             per_model=per_model,
+            error=f"Too few models responded: {models_responded}/{models_queried} (min_models={config.min_models})",
         )
 
     # Load the mode-specific aggregation prompt
     try:
         template = load_aggregation_prompt(mode, prompts_dir)
-    except AggregationError:
+    except AggregationError as e:
         return ConsensusResult(
             status="unavailable",
             models_queried=models_queried,
             models_responded=models_responded,
             per_model=per_model,
+            error=f"Aggregation prompt not found: {e}",
         )
 
     # Substitute placeholders
@@ -211,19 +224,15 @@ async def aggregate(
 
     # Create or use provided aggregator provider
     if aggregator_provider is None:
-        # Find the first Anthropic model in config
-        anthropic_model = next(
-            (m for m in config.models if m.provider == "anthropic"),
-            None,
-        )
-        if anthropic_model is None:
+        if not config.models:
             return ConsensusResult(
                 status="unavailable",
                 models_queried=models_queried,
                 models_responded=models_responded,
                 per_model=per_model,
+                error="No models configured for aggregation",
             )
-        aggregator_provider = AnthropicProvider(anthropic_model)
+        aggregator_provider = create_provider(config.models[0])
 
     # Call the aggregator
     try:
@@ -234,13 +243,15 @@ async def aggregate(
                 models_queried=models_queried,
                 models_responded=models_responded,
                 per_model=per_model,
+                error=f"Aggregator call failed: {agg_response.error}",
             )
-    except Exception:
+    except Exception as e:
         return ConsensusResult(
             status="unavailable",
             models_queried=models_queried,
             models_responded=models_responded,
             per_model=per_model,
+            error=f"Aggregator exception: {type(e).__name__}",
         )
 
     # Parse the aggregation output

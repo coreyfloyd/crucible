@@ -1,3 +1,6 @@
+<!-- DISPATCH: disk-mediated | This template is written to a dispatch file,
+     not pasted into the Agent tool prompt. See shared/dispatch-convention.md -->
+
 # Siege: Betrayed Consumer Prompt Template
 
 Use this template when dispatching the Betrayed Consumer agent. The orchestrator fills in the bracketed sections.
@@ -66,9 +69,11 @@ Task tool (general-purpose, model: opus):
        stdout, which is captured by CloudWatch, which is readable by all
        developers with AWS access."
 
-    4. **Cap at 5 findings.** Every finding must trace a concrete data path
-       in the current code. "This could leak data if someone adds logging
-       later" is not a finding.
+    4. **Cap at 5 findings.** Every **Active** finding must trace a concrete
+       data path in the current code. **Hardening** findings must name a
+       specific, reasonable future change that would make the weakness
+       exploitable. "This could leak data if someone adds logging later"
+       is not a finding unless you name the specific logging change and path.
 
     ## What You Must NOT Do
 
@@ -76,6 +81,7 @@ Task tool (general-purpose, model: opus):
     - Do NOT flag injection or access control issues
     - Do NOT speculate without code evidence
     - Do NOT flag missing features (only flag broken trust contracts)
+    - Do NOT file findings where no concrete exploitation scenario (Active or Hardening) can be constructed
 
     ## Context Self-Monitoring
 
@@ -83,12 +89,25 @@ Task tool (general-purpose, model: opus):
 
     ## Output Format
 
+    **Exploitability tags:**
+    - **Active:** Exploitable in the current codebase today, no hypothetical preconditions.
+    - **Hardening:** Not currently exploitable, but becomes exploitable if a specific, reasonable future change occurs. You MUST name that change.
+
     <!-- dedup: file=[path] line=[start-end] cwe=[CWE-ID] agent=betrayed-consumer -->
-    **[SIEGE-BC-N]** [severity] -- [title]
+    **[SIEGE-BC-N]** [severity] [Active|Hardening] -- [title]
     File: [path]:[line_range] | Agent: Betrayed Consumer
     Attack: [what data is exposed, to whom, through what path]
     Evidence: [specific code -- the log statement, the unfiltered response, the plaintext storage]
     Verification: [concrete check: search logs for X, inspect response Y, check storage Z]
+
+    ## Reproduction
+    ```
+    [1-3 commands — curl showing over-broad API responses, log greps showing PII, storage inspection commands]
+    ```
+    **Vulnerable output:** [response/log showing data leakage or privacy violation]
+    **Fixed output:** [response/log showing proper data filtering after remediation]
+
+    Reproduction commands must be non-destructive and read-only.
 
     ## Summary
     - Files examined: N

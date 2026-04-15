@@ -1,3 +1,6 @@
+<!-- DISPATCH: disk-mediated | This template is written to a dispatch file,
+     not pasted into the Agent tool prompt. See shared/dispatch-convention.md -->
+
 # Siege: Chain Analyst Prompt Template
 
 Use this template when dispatching the Chain Analyst agent. The orchestrator fills in the bracketed sections. The Chain Analyst runs AFTER agents 1-5 complete.
@@ -68,10 +71,14 @@ Task tool (general-purpose, model: opus):
     2. **Read the trust boundary files.** Where does data cross from one
        trust domain to another? Is it re-validated at each crossing?
 
-    3. **Construct multi-step attack paths.** A chain requires:
-       - **Demonstrated vulnerability A** (concrete code evidence, not speculation)
-       - **Demonstrated vulnerability B** (concrete code evidence)
+    3. **Construct multi-step attack paths.** A chain requires ALL of:
+       - **Demonstrated vulnerability A** in component/file X (concrete code evidence)
+       - **Demonstrated vulnerability B** in a DIFFERENT component/file Y (concrete code evidence)
        - **A concrete mechanism where A enables B** (data flow, shared state, trust transition)
+       - **Cross-boundary test:** A and B must be in different files or components.
+         If both vulnerabilities live in the same function or file, it's a
+         single finding — report it under "## Single-Point Findings" instead
+         and move on.
        - Example: "Step 1: exploit X in component A (Medium alone). Step 2:
          use the result to bypass Y in component B (Medium alone). Combined:
          attacker gains Z (Critical)."
@@ -95,6 +102,15 @@ Task tool (general-purpose, model: opus):
     - Do NOT suggest fixes
     - Do NOT speculate about chains you can't trace through actual code
     - Do NOT flag single-point vulnerabilities (that's the other agents' job)
+    - Do NOT submit restatement chains. A "chain" that describes a single
+      vulnerability's consequences in multiple steps is not a chain — it's
+      a single finding wearing a trenchcoat. Apply the CROSS-BOUNDARY TEST:
+      a valid chain MUST cross at least 2 different files or components,
+      with a concrete mechanism (shared state, data flow, trust transition)
+      linking them. "Exploit X in file A, which causes bad thing in file A"
+      is a single finding, not a chain. If you cannot name distinct
+      vulnerabilities in distinct components that enable each other, you
+      do not have a chain.
 
     ## Context Self-Monitoring
 
@@ -102,11 +118,40 @@ Task tool (general-purpose, model: opus):
 
     ## Output Format
 
-    **[SIEGE-CA-N]** [severity] -- [chain title]
+    **Exploitability tags:**
+    - **Active:** Every step in the chain is exploitable in the current codebase today.
+    - **Hardening:** Any step in the chain requires a future change to become exploitable. Chains inherit exploitability from their weakest link -- if any step is Hardening, the chain is Hardening. You MUST name the specific future change.
+
+    **[SIEGE-CA-N]** [severity] [Active|Hardening] -- [chain title]
     File: [path1]:[line] → [path2]:[line] → [path3]:[line] | Agent: Chain Analyst
     Attack: [multi-step exploitation narrative: step 1 → step 2 → impact]
     Evidence: [code at each step in the chain]
     Verification: [how to confirm the chain is exploitable end-to-end]
+
+    ## Reproduction
+    ```
+    Step 1: [command demonstrating first link in the chain]
+    Step 2: [command using step 1's result to demonstrate second link]
+    Step 3: [command showing final impact]
+    ```
+    **Vulnerable output:** [what each step produces when the chain is exploitable]
+    **Fixed output:** [where the chain breaks after remediation]
+
+    Reproduction commands must be non-destructive and read-only.
+
+    {{#if attack_mapping}}
+    ## ATT&CK Mapping
+
+    For each chain, map steps to MITRE ATT&CK technique IDs:
+
+    | Chain Step | Technique ID | Technique Name | Tactic |
+    |---|---|---|---|
+    | [step 1 description] | T[NNNN] | [technique name] | [tactic: initial-access/execution/persistence/etc.] |
+    | [step 2 description] | T[NNNN] | [technique name] | [tactic] |
+
+    Only include this section when attack_mapping is enabled. Use ATT&CK Enterprise matrix techniques.
+    Common mappings: T1190 (exploit public-facing app), T1078 (valid accounts), T1068 (exploitation for privilege escalation), T1005 (data from local system), T1071 (application layer protocol).
+    {{/if}}
 
     ## Summary
     - Trust boundaries examined: N

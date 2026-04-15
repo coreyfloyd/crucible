@@ -5,6 +5,9 @@ description: Multi-model consensus for high-stakes quality decisions. Opt-in MCP
 
 ## Overview
 
+<!-- CANONICAL: shared/dispatch-convention.md -->
+All subagent dispatches use disk-mediated dispatch. See `shared/dispatch-convention.md` for the full protocol.
+
 Multi-model consensus dispatches high-stakes decision prompts to multiple LLM providers in parallel via an MCP server, then synthesizes the responses. It surfaces blind spots that single-model review misses. Entirely opt-in — without configuration, all skills behave exactly as before.
 
 The consensus system is not a replacement for existing skill logic. It is an amplifier applied at specific, high-leverage decision points where the cost of a missed defect or a wrong judgment is disproportionately high. Skills that integrate consensus call it at defined moments (e.g., the stagnation judge in quality-gate, the Challenger in design review) and treat its output as additional signal, not as an override.
@@ -28,7 +31,7 @@ Dispatches a prompt to all configured models in parallel, collects responses, an
 
 | Field              | Type   | Description |
 |--------------------|--------|-------------|
-| `status`           | enum   | `"consensus"` (all models responded), `"partial"` (some models responded, count >= min_models), `"unavailable"` (fewer than min_models responded or tool not configured). |
+| `status`           | enum   | `"complete"` (all models responded), `"partial"` (some models responded, count >= min_models), `"unavailable"` (fewer than min_models responded or tool not configured). |
 | `models_queried`   | int    | Number of models the query was dispatched to. |
 | `models_responded` | int    | Number of models that returned a valid response within the timeout. |
 | `synthesis`        | string | Aggregated result text, formatted according to the selected mode. |
@@ -109,7 +112,7 @@ consensus:
 | Field                       | Type    | Default | Description |
 |-----------------------------|---------|---------|-------------|
 | `consensus.enabled`         | boolean | `false` | Master switch. When false, all `consensus_query` calls immediately return `status: "unavailable"`. |
-| `consensus.min_models`      | int     | `2`     | Minimum number of models that must respond for the result to be `"consensus"` or `"partial"`. If fewer respond, status is `"unavailable"`. Must be >= 2. |
+| `consensus.min_models`      | int     | `2`     | Minimum number of models that must respond for the result to be `"complete"` or `"partial"`. If fewer respond, status is `"unavailable"`. Must be >= 2. |
 | `consensus.timeout_seconds` | int     | `120`   | Maximum time (seconds) to wait for all models to respond. Models exceeding this are marked `responded: false`. Must be >= 10 and <= 600. |
 | `consensus.models`          | list    | `[]`    | List of model configurations. At least `min_models` entries required. |
 | `consensus.models[].provider`    | string | —  | Provider identifier. Must be one of the shipped providers (`anthropic`, `google`) or a planned provider once available. |
@@ -131,7 +134,7 @@ consensus:
 
 The consensus system is designed to never break existing workflows. Degradation follows a strict hierarchy:
 
-1. **Consensus available** — All configured models respond within the timeout. `status: "consensus"`. Full multi-model synthesis is returned to the calling skill.
+1. **Consensus available** — All configured models respond within the timeout. `status: "complete"`. Full multi-model synthesis is returned to the calling skill.
 
 2. **Partially available** — Some models fail or time out, but the number of successful responses is >= `min_models`. `status: "partial"`. Aggregation proceeds with available responses. The `models_queried` and `models_responded` fields indicate the gap.
 
@@ -204,7 +207,7 @@ Periodic application (rather than every-round) keeps cost manageable. A 10-round
 | quality-gate | Fix verifier | Mechanical check (did the fix address the finding?). Single-model Sonnet is sufficient. Multi-model adds cost without proportional value. |
 | quality-gate | Fix agent | Requires filesystem access to modify code/docs. External models cannot write local files. |
 | red-team | Standalone full-loop | When invoked directly (not via quality-gate), red-team runs its own stagnation loop. Consensus integration is at the quality-gate level, which owns the iteration. |
-| design | Investigation agents | Codebase Scout, Domain Researcher, Impact Analyst all need filesystem access. External models cannot read the local codebase. |
+| design | Investigation agents | Domain Researcher, Impact Analyst all need filesystem access. External models cannot read the local codebase. Recon provides structural context but runs locally. |
 | build | Task implementation | Code generation requires filesystem access and project context. |
 
 ### Reconsideration Criteria

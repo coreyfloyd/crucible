@@ -7,6 +7,9 @@ description: "Use when you have a GitHub epic (or equivalent) with child tickets
 
 ## Overview
 
+<!-- CANONICAL: shared/dispatch-convention.md -->
+All subagent dispatches use disk-mediated dispatch. See `shared/dispatch-convention.md` for the full protocol.
+
 Fully autonomous skill that takes a GitHub epic (or equivalent issue tracker artifact), processes child tickets without human interaction, and produces complete design docs + implementation plans + machine-readable contracts per ticket. Designed to run unattended while a separate agent (or human) handles implementation.
 
 **The core insight:** Separate the cognitive work (design, investigation, decision-making, planning) from the execution work (implementation, testing). One agent specs autonomously, another builds. The spec agent requires no human input after the initial invocation -- it investigates the codebase, makes design decisions, documents its reasoning, and flags uncertainty via terminal alerts rather than blocking on human answers. Contracts solve the hard problem of two async agents communicating through prose -- prose is ambiguous, contracts make inter-ticket interfaces structural and verifiable.
@@ -239,7 +242,7 @@ This prevents mid-ticket compaction, which wastes partial investigation work. Th
 Teammates run as sub-agents with their own context windows. Complex tickets can exhaust a teammate's context before investigation completes. Mitigate by triaging complexity before dispatch:
 
 1. **Complexity signal:** Count the number of design dimensions requiring investigation (inferred from ticket body + upstream dependency count + codebase area size from cartographer). If a ticket has **5+ design dimensions** or **3+ upstream contracts** to consume, flag it as "complex."
-2. **Simplified investigation for complex tickets:** Complex tickets use quick-scan investigation for ALL dimensions (single codebase scout per dimension instead of 3-agent deep dive), with more aggressive summarization. The teammate's task description includes: "This ticket is flagged as complex. Use quick-scan investigation for all dimensions. Summarize each finding to 2-3 sentences before proceeding to the next dimension."
+2. **Simplified investigation for complex tickets:** Complex tickets use quick-scan investigation for ALL dimensions (read recon brief per dimension instead of 3-agent deep dive), with more aggressive summarization. The teammate's task description includes: "This ticket is flagged as complex. Use quick-scan investigation for all dimensions. Summarize each finding to 2-3 sentences before proceeding to the next dimension."
 3. **Two-phase split for very large tickets:** If a ticket has **8+ design dimensions**, the orchestrator splits investigation into two phases with an intermediate disk persist. Phase A investigates the first half of dimensions, writes findings to `tickets/<ticket-number>/partial-investigation.md`, and completes. Phase B reads the partial investigation from disk, investigates the remaining dimensions, and proceeds to writing. This doubles the effective context budget at the cost of one extra sub-agent dispatch.
 
 ### Compaction Recovery
@@ -253,6 +256,7 @@ After context compaction:
 5. Read `scratch/<run-id>/decisions.md` -- recover the decision log for context cascading to remaining tickets.
 6. For any ticket with status `investigating`, `dependency-check`, `writing`, or `validating`: restart from the beginning of its current phase.
 7. Emit a Compression State Block into the conversation to seed the new context window.
+7.5. **Read session index summary (supplementary):** If the CSB Scratch State contains a `Session Index:` path, or if globbing `~/.claude/projects/<hash>/memory/session-index/*/summary.md` finds a recent file, read `summary.md`. Include the Activity Timeline, Files Modified, and Key Decisions sections in the post-compaction narration. If no session index exists, skip silently — this step is purely additive.
 8. Resume processing from the wave schedule, skipping completed/committed tickets.
 
 ### Checkpoint Timing
@@ -263,6 +267,19 @@ Emit a Compression State Block at:
 - **Ticket re-queues:** When tickets are re-queued to later waves due to dependency discovery
 - **Escalations:** Before any escalation to user
 - **Health transitions:** On any GREEN->YELLOW or YELLOW->RED transition
+
+## Pipeline-Active Marker
+
+Before any dispatch work, check for a crashed prior spec session:
+
+1. **Check `<scratch>/.pipeline-active`** (where `<scratch>` is `~/.claude/projects/<hash>/memory/`)
+2. **Not found:** Write the pipeline-active marker (JSON with `pipeline_id` set to current session ID, `skill` set to `"spec"`, `phase` set to `"init"`, `start_time` set to current ISO-8601 timestamp, `scratch_dir` and `dispatch_dir` paths, `branch` from `git branch --show-current`, `baseline_sha` from `git rev-parse HEAD`). Proceed to Orchestration Flow.
+3. **Found, same `pipeline_id`:** Compaction recovery (existing behavior). Do not re-write the marker.
+4. **Found, different `pipeline_id`:** Previous spec session crashed. Check marker's `branch` against current branch — if mismatched, warn the user which branch the crashed session was on. Present to user:
+   > "Previous spec session on branch [marker.branch] crashed. Start fresh? [yes]"
+   Delete the stale marker. Write a fresh marker. Proceed to Orchestration Flow. (Full replay orchestration for spec is deferred -- detection and cleanup only for now.)
+
+**Marker cleanup:** Delete `.pipeline-active` after the summary report (step [12]) completes.
 
 ## Orchestration Flow
 
@@ -304,6 +321,7 @@ Emit a Compression State Block at:
   |                +-- Run investigation (same depth as /design)
   |                +-- Dependency discovery check -> write discoveries.json
   |                +-- Update local status -> "writing"
+  |                +-- Security signal scan (shared/security-signals.md) -> include security_review in contract if signals detected
   |                +-- Write design doc + implementation plan + contract to output/
   |                +-- Contract schema validation
   |                +-- Update local status -> "validating"
@@ -317,7 +335,7 @@ Emit a Compression State Block at:
   |                +-- Copy outputs from ticket dirs to docs/plans/
   |                +-- Commit outputs to spec/<epic-number> branch (serialized)
   |                +-- Check for re-queued tickets, update wave schedule
-  |                +-- Output status update to terminal
+  |                +-- Output status update to terminal (include security_review status per ticket if present)
   |
   +-- [11] End-of-run quality gate
   |        +-- Phase 1: Per-document gates (design + plan per ticket, in parallel)
@@ -420,14 +438,27 @@ Each ticket goes through the same investigation process as `/design`, but fully 
 
 ### Step 1: Investigation
 
+At the start of each ticket's investigation, dispatch `/recon` for structural context:
+
+```
+/recon
+  task: "<ticket title and description>"
+  session_id: "<spec-epic-run-id>"
+  modules: ["impact-analysis"]
+```
+
+The `session_id` is the epic run's session ID -- shared across all tickets for Structure Scout cache reuse. The Structure Scout runs once for the first ticket and is cached for all subsequent tickets.
+
+**On recon failure:** "Recon failed: [reason]. Falling back to inline investigation." Proceed without recon context -- dimension investigations explore from scratch.
+
 Same depth as `/design` Phase 2 -- for each design dimension:
-- **Deep dive** (architectural decisions): 3 parallel agents (codebase scout, domain researcher, impact analyst) + challenger
-- **Quick scan** (implementation approach): single codebase scout
+- **Deep dive** (architectural decisions): 2 parallel agents (domain researcher, impact analyst) with recon brief context + challenger
+- **Quick scan** (implementation approach): read relevant sections of the recon brief (no agent dispatch needed)
 - **Direct resolution** (no technical implications): decide immediately
 
 All investigation results cascade -- prior ticket decisions inform subsequent investigations via the decisions log in the scratch directory.
 
-If the ticket is flagged "complex" (5+ design dimensions or 3+ upstream contracts), use quick-scan for ALL dimensions. Summarize each finding to 2-3 sentences.
+If the ticket is flagged "complex" (5+ design dimensions or 3+ upstream contracts), use quick-scan for ALL dimensions (read recon brief). Summarize each finding to 2-3 sentences.
 
 ### Step 2: Dependency Discovery
 
@@ -508,7 +539,12 @@ After generating the contract YAML, validate against the schema:
    - `api_surface[].params` must be present for `function`, `class`, and `interface` types. Each param must have `name`, `type`, and `required` fields.
    - `invariants.checkable[].check_method` must be one of: `grep`, `code-inspection`, `file-structure`
    - `invariants.testable[].test_tag` must match the pattern `contract:<category>:<id>`
-3. **Integration point validation:** For each entry in `integration_points`, verify that the referenced contract file exists in `docs/plans/` or the scratch directory's `contracts/` folder. If the referenced contract does not yet exist (upstream ticket not yet processed), log a warning but do not block.
+3. **Security review field validation (when present):**
+   - `security_review.status` must be one of: `required`, `recommended`
+   - `security_review.signals_detected` must be a non-empty array
+   - Each entry must have `category` (one of: `auth`, `crypto`, `external_input`, `secrets`, `network`, `pii_data`, `dependencies`) and `evidence` (non-empty string)
+   - `security_review.deployment_context` (if present) must be one of: `public`, `intranet`, `hybrid`
+4. **Integration point validation:** For each entry in `integration_points`, verify that the referenced contract file exists in `docs/plans/` or the scratch directory's `contracts/` folder. If the referenced contract does not yet exist (upstream ticket not yet processed), log a warning but do not block.
 4. **On validation failure:** Report specific errors. Re-dispatch the contract generation step with the validation errors as feedback. If the second attempt also fails, log the errors, mark the contract as having validation warnings, and continue -- do not block the entire run on a malformed contract.
 
 ### Step 6: Lightweight Per-Ticket Validation
@@ -539,6 +575,16 @@ On re-invocation of `/spec` with the same epic URL:
 3. **Skip** `committed` tickets. **Retry** `failed` and `re-queued` tickets. **Resume** `pending` tickets. **Re-process** `needs-respec` tickets with upstream contracts now available. **Unblock** `blocked` tickets: present blocking decision context and options to user, collect input, then resume.
 4. Present the resume plan to the user before proceeding.
 
+## Quality Gate Requirement (Non-Negotiable)
+
+**Every quality gate in this pipeline MUST run to completion.** This is NOT optional — you may NOT self-assess whether a quality gate is "needed" based on ticket size, complexity, or scope. Spec dispatches quality gates on every committed ticket (potentially dozens), which creates strong temptation to skip on "simple" tickets. Do not yield to this temptation.
+
+**Fixing findings is NOT the same as passing the gate.** The iteration loop must complete with a clean verification round (0 Fatal, 0 Significant on a fresh review). Spec is the highest-volume gate dispatcher — the short-circuit temptation is strongest here.
+
+**The only valid skip** is an unambiguous user instruction specifically referencing the gate. General feedback is not skip approval.
+
+**Gate tracking:** Before compiling the end-of-run summary, verify that every committed ticket has per-document gate round counts >= 1 with clean final rounds. If any gate was skipped with explicit user approval, record it as `USER_SKIP`. A zero without user approval indicates a gate was dropped — report this in the summary.
+
 ## End-of-Run Quality Gate
 
 After all waves complete and all tickets are in terminal states, run a two-phase quality gate.
@@ -547,14 +593,14 @@ After all waves complete and all tickets are in terminal states, run a two-phase
 
 For each committed ticket, dispatch two standard quality gate passes using existing artifact types:
 
-1. **Design doc gate:** Dispatch `crucible:quality-gate` with artifact type `design` on the ticket's design doc. Review scope: Are decisions well-reasoned? Are acceptance criteria testable? Is the current-state analysis accurate?
-2. **Implementation plan gate:** Dispatch `crucible:quality-gate` with artifact type `plan` on the ticket's implementation plan. Review scope: Are tasks concrete? Do they align with the design doc? Are dependencies between tasks identified?
+1. **Design doc gate:** **(Non-negotiable — see Quality Gate Requirement.)** Dispatch `crucible:quality-gate` with artifact type `design` on the ticket's design doc. Review scope: Are decisions well-reasoned? Are acceptance criteria testable? Is the current-state analysis accurate?
+2. **Implementation plan gate:** **(Non-negotiable — see Quality Gate Requirement.)** Dispatch `crucible:quality-gate` with artifact type `plan` on the ticket's implementation plan. Review scope: Are tasks concrete? Do they align with the design doc? Are dependencies between tasks identified?
 
 These use the quality gate's existing iterative fix loop. Each gate runs within normal context budgets (one document per gate invocation). Per-document gates can run in parallel across tickets (via Agent Teams, or sequentially via Agent tool fallback).
 
 ### Phase 2: Cross-Ticket Integration Check
 
-After all per-document gates pass, run a lightweight integration check across ticket boundaries using the prompt template `spec/integration-check-prompt.md`. This is NOT dispatched through `crucible:quality-gate`'s iterative loop -- it is a focused consistency review with a targeted remediation path.
+After all per-document gates pass, run a mandatory integration check across ticket boundaries using the prompt template `spec/integration-check-prompt.md`. **(Non-negotiable — see Quality Gate Requirement.)** This check is mandatory but is NOT dispatched through `crucible:quality-gate`'s iterative loop — it is a focused consistency review with targeted remediation.
 
 **Input (kept small for context budget):**
 - All contract YAML files (500-1000 tokens each)
@@ -610,6 +656,7 @@ All tickets in an epic commit to a single branch: `spec/<epic-number>`. This avo
 - **No per-teammate worktrees:** Teammates do not use git worktrees. Each teammate writes all outputs to its isolated scratch directory. Teammates perform no git operations.
 - **Orchestrator handles git:** After each wave completes, the orchestrator copies outputs from per-ticket scratch directories to `docs/plans/`, then commits to the `spec/<epic-number>` branch. All git operations are serialized through the orchestrator. If the orchestrator needs a worktree for the epic branch (e.g., the user's working tree is on a different branch), it creates a single worktree for its own use.
 - **Commit ordering:** Within a wave, the orchestrator commits each ticket's outputs sequentially. Across waves, commits are naturally sequential.
+- **Repository safety check (before PR creation):** Before creating the PR, run `gh repo view --json isPrivate -q .isPrivate`. If the repo is public, scan all commit messages and the PR body for proprietary company information, internal names, or sensitive data. STOP and confirm with the user if anything looks sensitive. This is especially critical for /spec because it runs largely autonomously and files multiple issues in batch.
 - **PR creation:** A single PR is created (if user opted in) from the `spec/<epic-number>` branch after all tickets complete.
 
 ## Contract Format
@@ -674,6 +721,18 @@ integration_points:
     surface: "AuthService.validate_token"
     notes: "Depends on the new token format from #124"
 
+# Security review directive -- optional, present when security signals detected
+# during spec writing. Consumed by /build Phase 4 Step 5.5 to dispatch siege.
+# Omit entirely if no signals detected. See shared/security-signals.md.
+security_review:                           # OPTIONAL
+  status: "required"                       # required (2+ signals) | recommended (1 signal)
+  signals_detected:
+    - category: "auth"                     # auth | crypto | external_input | secrets | network | pii_data | dependencies
+      evidence: "ticket mentions login flow and JWT tokens"
+    - category: "external_input"
+      evidence: "design doc includes API endpoint definitions"
+  deployment_context: "public"             # OPTIONAL — public | intranet | hybrid
+
 # Decisions made where multiple viable paths existed
 ambiguity_resolutions:
   - id: "AMB-1"
@@ -720,6 +779,9 @@ When `/spec` resolves an ambiguity or defines an API surface on ticket N that af
 | `invariants` | Yes | Must have at least one checkable or testable |
 | `invariants.checkable[].check_method` | Yes | `grep`, `code-inspection`, or `file-structure` |
 | `invariants.testable[].test_tag` | Yes | Pattern: `contract:<category>:<id>` |
+| `security_review` | No | Optional; present when security signals detected (see `shared/security-signals.md`) |
+| `security_review.status` | Conditional | Required when `security_review` present. `required` or `recommended` |
+| `security_review.signals_detected` | Conditional | Required when `security_review` present. Non-empty array of `{category, evidence}` |
 | `integration_points` | No | May be empty if no cross-ticket deps |
 | `ambiguity_resolutions` | No | May be empty if all decisions were high-confidence |
 
@@ -729,6 +791,12 @@ When `/spec` resolves an ambiguity or defines an API surface on ticket N that af
 - Emitting a Compression State Block with stale or missing Key Decisions (decisions must be cumulative across all prior blocks)
 - Allowing the Goal field to drift across successive Compression State Blocks (must match original user request)
 - Exceeding 10 entries in the Key Decisions list without overflow-compressing the oldest
+- Skipping a per-document quality gate because the ticket seems "small", "simple", or "trivial"
+- Self-assessing that a quality gate is unnecessary based on perceived ticket complexity
+- Declaring a quality gate "done" after fixing findings without a clean verification round (fixing is not passing)
+- Skipping the integration check because "all per-document gates passed so it's fine"
+- Interpreting general user feedback as approval to skip a quality gate that has not yet run — once a gate has run and presented findings to the user, the user's decision to proceed is authoritative
+- Treating session index summary as authoritative over CSB state (session index is supplementary narrative, CSB is authoritative state)
 
 ## Integration
 
@@ -736,6 +804,8 @@ When `/spec` resolves an ambiguity or defines an API surface on ticket N that af
 - **crucible:cartographer** -- consult mode, once at start of run
 - **crucible:forge** -- feed-forward mode, once at start of run
 - **crucible:design** -- investigation prompts (parallel agents) reused for autonomous investigation. Templates in `design/investigation-prompts.md`.
+- **crucible:recon** -- dispatched per-ticket at investigation start with `modules: ["impact-analysis"]` and epic-level `session_id` for Structure Scout cache reuse across tickets. Replaces Codebase Scout. Fallback: investigate from scratch.
+- **crucible:assay** -- dispatched per architectural dimension (Deep Dive) with `decision_type: "architecture"`. Confidence routing: high=accept, medium=alert, low=block-alert. Fallback: manual synthesis.
 - **crucible:quality-gate** -- per-document gates (artifact types `design` and `plan`) + cross-ticket integration check on contracts
 - **crucible:worktree** -- orchestrator-only, for the epic branch if the user's working tree is on a different branch
 

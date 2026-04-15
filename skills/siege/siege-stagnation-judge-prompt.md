@@ -1,3 +1,6 @@
+<!-- DISPATCH: disk-mediated | This template is written to a dispatch file,
+     not pasted into the Agent tool prompt. See shared/dispatch-convention.md -->
+
 # Siege: Stagnation Judge Prompt Template
 
 Use this template when dispatching the stagnation judge during Phase 4 Security Gate. The judge is a Sonnet agent performing semantic comparison of findings across rounds.
@@ -28,6 +31,11 @@ Task tool (general-purpose, model: sonnet):
     - A fix that closes one vulnerability but creates a different one in
       a different security domain IS progress if the new vulnerability
       is genuinely unrelated.
+    - **Exploitability transitions matter.** A finding that changes from
+      Active (exploitable today) to Hardening (requires a future change)
+      at the same severity is progress — the active exploitation path was
+      closed. A finding that changes from Hardening to Active at the same
+      severity is regression — a latent risk became live.
 
     ## Round N-1 Findings
 
@@ -58,6 +66,17 @@ Task tool (general-purpose, model: sonnet):
 
     ### Step 2: Semantic Comparison
     Classify each Round N finding as Recurring or New.
+
+    ### Step 2b: Exploitability Transition Check
+    For findings classified as Recurring, check whether the exploitability
+    tag changed between rounds:
+    - **Active → Hardening** at same severity: reclassify as **Progressed**
+      (the active exploitation path was closed). Count as New for Step 3
+      decision rules.
+    - **Hardening → Active** at same severity: reclassify as **Regressed**.
+      Count as Recurring AND force STAGNATION if any Regressed findings
+      exist (a latent risk became live — the fix made things worse).
+    - **No exploitability change:** keep original Recurring/New classification.
 
     ### Step 3: Apply Decision Rules
 
@@ -90,6 +109,8 @@ Task tool (general-purpose, model: sonnet):
     ### Classification
     - **Recurring findings:** [list or "None"]
     - **New findings:** [list or "None"]
+    - **Progressed findings (Active→Hardening):** [list or "None"]
+    - **Regressed findings (Hardening→Active):** [list or "None" — any Regressed finding forces STAGNATION]
     - **Difficulty classes (if all new):** [Surface/Structural per finding]
     - **Consecutive structural rounds:** [0 | 1 | 2]
 

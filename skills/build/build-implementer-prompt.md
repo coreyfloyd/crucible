@@ -1,3 +1,5 @@
+<!-- DISPATCH: disk-mediated | This template is written to a dispatch file,
+     not pasted into the Agent tool prompt. See shared/dispatch-convention.md -->
 <!-- Sections marked CANONICAL are defined in shared/implementer-common.md. Keep in sync when updating. -->
 # Build Implementer Prompt Template
 
@@ -67,6 +69,14 @@ Task tool (general-purpose, model: opus, team_name: "<team-name>", name: "implem
     4. Do NOT batch -- write one test, see it fail, implement, see it pass. Then next test.
     5. Self-review (see checklist below)
     6. Report back to the lead
+
+    ## File Operations Safety
+
+    - NEVER delete files unless the task explicitly requires deletion
+    - When cleanup is needed, report what you'd like to remove and wait for confirmation from the lead
+    - Prefer simple approaches over clever ones — no tombstone files, no overwriting files with empty content as a "soft delete"
+    - If you encounter files that seem unnecessary, note them in your report — do NOT remove them
+    - When in doubt about whether to modify or delete a file: ask the lead first
 
     <!-- CANONICAL: shared/implementer-common.md — Self-Review Checklist -->
     ## Self-Review Checklist
