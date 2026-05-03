@@ -1003,6 +1003,7 @@ If systematic investigation reveals issue is truly environmental, timing-depende
 
 **Supporting techniques** (available in this directory):
 - **`root-cause-tracing.md`** -- Trace bugs backward through call stack to find original trigger
+- **`subtree-bisection.md`** -- Replace suspect code with a primitive and add complexity back in halves; use when two reasoned fixes have already failed or static analysis is not converging
 - **`defense-in-depth.md`** -- Add validation at multiple layers after finding root cause
 - **`condition-based-waiting.md`** -- Replace arbitrary timeouts with condition polling
 
