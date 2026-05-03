@@ -96,6 +96,12 @@ would create non-deterministic stagnation behavior.
 - External review timeout or failure never blocks or delays the host red-team
   round.
 
+## Round Limit
+
+**After completing round 1 (red-team + fix + verifier), pause.** Surface the findings summary and fix outcome to the user, then ask: "Run another round?" Do not continue to round 2 automatically.
+
+This applies universally — every artifact type, every invocation context. The user decides whether additional rounds are warranted. If the user approves, run one more round and pause again. If round 1 is already clean (0 Fatal, 0 Significant), the gate passes without asking.
+
 ## How It Works
 
 1. Receives: artifact content, artifact type, project context
