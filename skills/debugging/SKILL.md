@@ -31,7 +31,7 @@ Every status update must include:
 
 **This requirement exists because:** Debugging sessions can involve multiple investigation rounds and fix attempts. Without narration, the user has no visibility into which hypotheses have been tried, what evidence was found, or why the orchestrator is pursuing a particular path.
 
-**Execution model:** The orchestrator dispatches all investigation and implementation to subagents. The orchestrator NEVER reads code, edits files, or runs tests directly. It forms hypotheses, dispatches work, and makes decisions based on subagent reports.
+**Execution model:** The session running this skill acts as the debugging orchestrator. The debugging orchestrator dispatches all investigation and implementation to subagents. It NEVER reads code, edits files, or runs tests directly — it forms hypotheses, dispatches work, and makes decisions based on subagent reports. This constraint is scoped to this skill's orchestrator role; it does not restrict the harness session during feature development or design review.
 
 **Depth principle:** When in doubt, dispatch MORE investigation agents, not fewer. A bug that looks simple from the surface often has a complex root cause. Spinning up 4-6 focused investigators in parallel costs minutes; missing the root cause costs hours.
 
@@ -213,7 +213,7 @@ Use for ANY technical issue:
 
 ## The Orchestrator-Subagent Debugging Workflow
 
-All investigation and implementation is delegated to subagents via the Agent tool. The orchestrator handles hypothesis formation, dispatch decisions, and escalation -- nothing else.
+All investigation and implementation is delegated to subagents via the Agent tool. The debugging orchestrator handles hypothesis formation, dispatch decisions, and escalation -- nothing else.
 
 ### Subagent Model Selection
 
@@ -897,7 +897,7 @@ This skill produces **hypotheses** (Phase 3.5) and **fixes** (Phase 5).
 
 If you catch yourself thinking:
 
-**Orchestrator discipline violations:**
+**Debugging orchestrator discipline violations:**
 - "Let me just read this one file quickly"
 - "I'll fix this inline instead of dispatching"
 - "I already know what's wrong, I'll skip investigation"
@@ -963,7 +963,7 @@ If you catch yourself thinking:
 | "Reference too long, I'll adapt the pattern" | Partial understanding guarantees bugs. Read it completely. |
 | "I see the problem, let me fix it" | Seeing symptoms does not equal understanding root cause. |
 | "One more fix attempt" (after 2+ failures) | 3+ failures = architectural problem. Question pattern, don't fix again. |
-| "Let me just peek at the code real quick" | Orchestrators dispatch, they don't investigate. Send a subagent. |
+| "Let me just peek at the code real quick" | The debugging orchestrator dispatches, it doesn't investigate. Send a subagent. |
 | "I'll dispatch implementation without a hypothesis" | No hypothesis = no direction. The agent will guess. Form the hypothesis first. |
 
 ## User-Provided Diagnosis Traps
