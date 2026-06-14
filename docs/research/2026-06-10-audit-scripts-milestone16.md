@@ -12,7 +12,7 @@ reasoning are not lost when that scratch is reclaimed.
 - **Subsystem audited (deep):** `scripts/` — the Python+shell tooling layer (26 tracked files)
 - **Methods:** `/audit` on `scripts/` (full protocol: scoping → 4 lenses + consistency-B → blind-spots → synthesis; **21 findings**); `/stocktake` full (52 skills, all 7 structural checkers green; **5 findings**); `/prospector` **Phase-1 only** (7 friction points); orchestrator-level CI/cross-cutting checks.
 - **Terminal verdict:** PASS (Tier-B ledger stub, run_id `019eb31a-5b34-7532-b15a-8ac7115bf6c5`).
-- **Dedupe baseline:** checked against milestones 3/4/10/12/15, the A0–A60 baseline (#363), and `docs/research/audit-innovate-2026-06-06.md`.
+- **Dedupe baseline:** checked against milestones 3/4/10/12/15, the A0–A60 baseline (#363), and `docs/research/audit-innovate-2026-06-06.md` (gitignored).
 
 ## Headline synthesis
 
@@ -149,6 +149,6 @@ The `/audit scripts/` run read these in full and grounded findings in them: `led
 
 ## Provenance
 
-- Lens reports (source): `~/.claude/projects/-mnt-coding-Coding-crucible/memory/audit/scratch/2026-06-10T19-29-36/{architecture,blindspots,consistency-a,consistency-b,robustness,testhealth}-findings.md`, `coverage-map.md`, `manifest.md` — machine-local, reclaimable.
+- Lens reports (source): `~/.claude/projects/-home-user-crucible/memory/audit/scratch/2026-06-10T19-29-36/{architecture,blindspots,consistency-a,consistency-b,robustness,testhealth}-findings.md`, `coverage-map.md`, `manifest.md` — machine-local, reclaimable.
 - Dispatch manifest: `<scratch>/crucible-dispatch-1781119787/manifest.jsonl` (9 dispatches, all completed).
 - Backlog handoff (gitignored): `docs/handoffs/2026-06-10-audit-milestone16-backlog.md`.
