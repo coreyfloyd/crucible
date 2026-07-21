@@ -45,6 +45,13 @@ contain temper/quality-gate/delve owned trigger phrases ("is this ready to ship"
 scoped to the `description:` value ONLY — those phrases legitimately appear in the
 SKILL.md BODY (the phrase-ownership table lists them as other skills' triggers), so
 a whole-file grep would false-trip; `_extract_description` isolates the value.
+Task 17 adds the Minor-(b) M-c scope-gap disclosure check (`check_mc_scope_gap`)
+— a dedicated PROXIMITY assertion (not a `REQUIRED_SUBSTRINGS`/`REQUIRED_ANY`
+entry, since `outside` alone is too generic): the three anchors `inquisitor`,
+`self-commit`, `outside` must CO-OCCUR within one `_MC_SCOPE_WINDOW`-char passage,
+so warden discloses that the M-c non-`fix:` mandate binds only warden-owned commits
+and that inquisitor/siege self-commit stays outside it (its own dedicated BAD
+selftest case removes the `outside` anchor and confirms the check trips).
 Stdlib only, no argparse.
 
 Style mirrors `scripts/check_canonical_drift.py`: ROOT-from-`__file__`, error
@@ -261,6 +268,21 @@ _FORBIDDEN_LEDGER_EMIT = re.compile(r"\b(?:emit|ledger_append)\s*\(")
 _FORBIDDEN_SIEGE_SUPPRESS = re.compile(
     r"(?:\b(?:skip_siege|force_siege)\s*:|--skip-siege\b)")
 
+# Minor (b) — M-c SCOPE-GAP disclosure. The M-c non-`fix:` mandate only binds
+# warden-OWNED commits; inquisitor/siege self-commit under their own subjects
+# (`inquisitor/SKILL.md:163` is `fix:`-style), which warden does not control, so
+# that self-commit is OUTSIDE the mitigation and can still hit reconcile's
+# `fix`/`hotfix` candidate-walk collision — disclosed and accepted. The check keys
+# on the three anchors `inquisitor`, `self-commit`, `outside` CO-OCCURRING within
+# one proximity window (a single coherent disclosure passage), not three scattered
+# mentions: `outside` alone is too generic to require as a bare substring, and the
+# file already carries all three anchors far apart (`:188` "outside the original
+# push scope", `:208` "inquisitor/siege self-commit") — the ~1460-char gap between
+# them is why the window is tight enough that only a deliberate co-located clause
+# satisfies it. Anchored on the least-generic literal (`self-commit`).
+_MC_SCOPE_ANCHORS: tuple[str, ...] = ("inquisitor", "self-commit", "outside")
+_MC_SCOPE_WINDOW = 600
+
 
 def check_frontmatter(text: str) -> list[str]:
     """The `name: warden` scalar and a `description:` line must be present in
@@ -402,6 +424,29 @@ def check_negatives(text: str) -> list[str]:
     return errs
 
 
+def check_mc_scope_gap(text: str) -> list[str]:
+    """Minor (b): warden must DISCLOSE that the M-c non-`fix:` mandate binds only
+    warden-OWNED commits, and that inquisitor/siege `self-commit` is `outside`
+    that mitigation (so it can still hit reconcile's `fix`/`hotfix` candidate-walk
+    collision). The three anchors in `_MC_SCOPE_ANCHORS` must CO-OCCUR within one
+    `_MC_SCOPE_WINDOW`-char passage — a single coherent clause, not three
+    scattered mentions. Pure (takes the text) so `--selftest` can exercise it."""
+    lowered = text.lower()
+    start = 0
+    while True:
+        idx = lowered.find("self-commit", start)
+        if idx == -1:
+            break
+        window = lowered[max(0, idx - _MC_SCOPE_WINDOW): idx + _MC_SCOPE_WINDOW]
+        if all(anchor in window for anchor in _MC_SCOPE_ANCHORS):
+            return []
+        start = idx + len("self-commit")
+    return ["missing M-c scope-gap disclosure (Minor b): warden must state that "
+            "the non-`fix:` mandate binds only warden-owned commits and that "
+            "`inquisitor`/siege `self-commit` is `outside` that mitigation — the "
+            f"three anchors {list(_MC_SCOPE_ANCHORS)} must co-occur in one passage"]
+
+
 def check_emission_surface_files() -> list[str]:
     """Option-C no-emit / I-W8 also greps warden's shipped SCRIPTS —
     `scripts/check_warden_*.py` — for an imperative ledger emit, on top of
@@ -433,6 +478,7 @@ def check_text(text: str) -> list[str]:
     errs.extend(check_forbidden(text))
     errs.extend(check_negatives(text))
     errs.extend(check_description_negatives(text))
+    errs.extend(check_mc_scope_gap(text))
     return errs
 
 
@@ -479,6 +525,11 @@ temper's edits sit in the working tree, uncommitted, for warden to commit.
 Universal per-leg residual commit (I-W6): after each fixer leg, warden commits
 that leg's residual with `git add -A && git commit -m '<subject>'` and a
 non-`fix:` subject (`chore(warden): temper fixes <run-id>`, per M-c).
+
+M-c scope gap: the non-`fix:` mandate binds only warden-owned commits. inquisitor
+and siege self-commit under their own subjects, which warden does not control, so
+an inquisitor self-commit stays **outside** this mitigation and can still hit
+reconcile's fix/hotfix candidate walk — disclosed and accepted.
 
 Working-tree-clean precondition: warden asserts `git status --porcelain` is
 fully empty — no tracked modifications and no untracked files. Standalone warden
@@ -692,6 +743,14 @@ _TEMPER_DESC_MISSING_TRIGGER = _TEMPER_DESC_GOOD.replace(
     "is this ready to ship", "does it look ok")
 
 
+# ---- Minor (b) M-c scope-gap sample -----------------------------------------
+# The GOOD sample carries the M-c scope-gap disclosure (all three anchors
+# co-located). Removing the `outside` anchor — the clause's scope word — breaks
+# the trio's co-occurrence, so the M-c scope-gap check must FAIL. "outside"
+# appears NOWHERE else in `_GOOD_SAMPLE`, so this transform is a clean removal.
+_MC_SCOPE_MISSING_SAMPLE = _GOOD_SAMPLE.replace("outside", "within")
+
+
 def selftest() -> int:
     # 1. GOOD sample passes every assertion.
     good_errs = check_text(_GOOD_SAMPLE)
@@ -808,6 +867,17 @@ def selftest() -> int:
     tmiss_errs = check_temper_description(_TEMPER_DESC_MISSING_TRIGGER)
     assert any("is this ready to ship" in e for e in tmiss_errs), (
         f"dropping temper's merge-verdict trigger should FAIL (I-W3), got: {tmiss_errs}")
+
+    # 13. Minor (b) M-c scope-gap disclosure — GOOD (all three anchors
+    #     co-located) passes; removing the `outside` scope anchor breaks the
+    #     trio's proximity, so the check FAILS.
+    assert check_mc_scope_gap(_GOOD_SAMPLE) == [], (
+        "GOOD sample's M-c scope-gap disclosure should pass, got: "
+        f"{check_mc_scope_gap(_GOOD_SAMPLE)}")
+    mc_errs = check_mc_scope_gap(_MC_SCOPE_MISSING_SAMPLE)
+    assert any("Minor b" in e for e in mc_errs), (
+        "removing the `outside` scope anchor should trip the M-c scope-gap "
+        f"disclosure check, got: {mc_errs}")
 
     # (The emission-surface scan over the shipped scripts and the temper-side
     # description read are filesystem checks, so they stay in `main()` — not here

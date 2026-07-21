@@ -176,6 +176,17 @@ candidate in reconcile's `fix`/`hotfix` walk regardless of whether the branch is
 squashed, so the subject-prefix collision cannot arise for any warden-owned commit even
 in a rebase/merge-commit repo.
 
+**M-c scope gap (inquisitor/siege self-commit is *outside* this mitigation — disclosed).**
+The non-`fix:` mandate above binds only **warden-owned** commits. **inquisitor and siege
+self-commit** under their own subjects — `inquisitor/SKILL.md:163` uses a `fix:`-style
+subject — which warden does **not** control, so an inquisitor/siege **self-commit** that
+reaches a merged branch un-squashed can still hit reconcile's `fix`/`hotfix`
+candidate-walk collision: the same failure the M-c note removes for warden-owned commits,
+but **outside** the reach of warden's non-`fix:` subject mandate. This is **disclosed and
+accepted** — closing it would require editing the leg's own SKILL.md subject or
+`reconcile_ledger.py`'s candidate walk, both out of scope per Constraint 1 (Option-C:
+warden touches no leg emission and no reconcile).
+
 **M-2 caveat (`chore()` also suppresses *legitimate* prior-gate falsifications).** The
 non-`fix:` subject is blanket: because `delve --fix` may repair pre-existing
 out-of-scope files (M-d), a `chore(warden):` commit that genuinely fixes a bug a
@@ -251,7 +262,11 @@ commit):
    **dirty-or-untracked** tree **REFUSES** with an actionable
    error (`commit, stash, or clean untracked files, then re-run /warden`), matching
    warden's detached-HEAD handling. Inside **build**, **build guarantees** the tree is
-   fully clean at warden entry (the build Phase 4 clean-tree rule); a dirty **or
+   fully clean at warden entry (the build Phase 4 clean-tree rule — which
+   **classifies each post-test-run untracked path**: commit a regenerated golden
+   file, gitignore an incidental, or surface a still-dirty tree as a build defect;
+   that per-path discharge is what makes build's clean-tree guarantee at warden
+   entry actually dischargeable, not a bare assertion); a dirty **or
    untracked** tree at build→warden entry is a **surfaced
    build/test defect** — warden errors, it never sweeps it into the first `chore(warden):`
    commit. **Standalone `/warden` and standalone `/finish` both fall to the
