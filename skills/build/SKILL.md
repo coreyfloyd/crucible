@@ -1348,7 +1348,7 @@ Red-team, innovate, adversarial tester, and inquisitor prompts live in their res
 
 ## Quality Gate Orchestration
 
-Build is the outermost orchestrator and controls all quality gates via `crucible:quality-gate`. Quality gate wraps `crucible:red-team` internally — do NOT invoke red-team separately at these points.
+Build is the outermost orchestrator. The **design and plan** gates route via `crucible:quality-gate`; the **code** gate routes via `crucible:warden` (which drives the quality-gate red-team leg exactly once). Do NOT invoke red-team (or temper/inquisitor/siege) separately at these points.
 
 **Gate points in the pipeline:**
 
@@ -1356,9 +1356,9 @@ Build is the outermost orchestrator and controls all quality gates via `crucible
 |---------------|---------------|----------|
 | Phase 1, Step 2 (after design) | design | Existing `crucible:red-team` on design |
 | Phase 2, Step 3 (after plan review) | plan | Existing `crucible:red-team` on plan |
-| Phase 4, Step 6 (after inquisitor + conditional re-review) | code | Existing `crucible:red-team` on implementation |
+| Phase 4 (single warden gate) | code | `crucible:warden` — runs the red-team leg (+ temper/delve/inquisitor/siege) |
 
-Code review (`crucible:temper`) and inquisitor (`crucible:inquisitor`) remain separate from the quality gate — temper does structured quality checks, inquisitor writes cross-component adversarial tests, and the quality gate does adversarial artifact review. All three serve distinct purposes.
+For the **code leg**, code review (`crucible:temper`), inquisitor (`crucible:inquisitor`), and the quality-gate red-team leg are now consolidated inside `crucible:warden` — temper does structured quality checks, inquisitor writes cross-component adversarial tests, and the red-team leg does adversarial artifact review (plus delve and a conditional siege run). The three purposes still stand, but warden drives them as one disjunction-of-native-gates rather than as separate steps.
 
 ### Contract-Aware Quality Gate
 
@@ -1402,12 +1402,13 @@ When a contract YAML exists for the current ticket, the quality gate adds contra
 - **crucible:quality-gate** — Iterative red-teaming at each quality gate point
 - **crucible:red-team** — Adversarial review engine (invoked by quality-gate)
 - **crucible:innovate** — Creative enhancement before quality gates
-- **crucible:inquisitor** — Full-feature cross-component adversarial testing (Phase 4, after temper, before quality-gate)
+- **crucible:inquisitor** — Full-feature cross-component adversarial testing (Phase 4, inside the warden gate)
+- **crucible:warden** — Consolidated pre-push code-review gate (Phase 4): temper + delve + quality-gate red-team leg + conditional siege + inquisitor as one disjunction-of-native-gates.
 
 **Recommended sub-skills:**
 - **crucible:forge** — Feed-forward at Phase 1 start, retrospective at Phase 4 completion
 - **crucible:cartographer-skill** — Consult at Phase 1 start, load at Phase 3 dispatches, record at Phase 4
-- **crucible:checkpoint** — Shadow git checkpoints at pipeline boundaries (pre-design-gate, pre-plan-gate, pre-wave-N, pre-cleanup-task-N, pre-temper, pre-inquisitor, pre-impl-gate)
+- **crucible:checkpoint** — Shadow git checkpoints at pipeline boundaries (pre-design-gate, pre-plan-gate, pre-wave-N, pre-cleanup-task-N)
 
 **Recon/assay context:** Inherits recon/assay context through /design (Phase 1). No direct dispatch. When design integrates recon, build benefits automatically. See #147 for rationale.
 
