@@ -1172,6 +1172,8 @@ Quality gate is invoked by the **outermost orchestrator only** — not self-invo
 
 **Rule: Skills NEVER self-invoke quality-gate.** They only document that their output is gateable. The outermost orchestrator (build, the user session, or another pipeline) always handles gating. This eliminates the ambiguity of skills trying to detect whether they are running standalone or as a sub-skill.
 
+**Carve-out (warden):** `crucible:warden` is a delegated gate-driver, not an exception to the one-gate-driver-per-pipeline invariant. Inside build, build **cedes** its single code-gate invocation to warden — warden is build's sole code-leg gate-driver and invokes the quality-gate red-team leg **exactly once**; standalone, warden is the outermost gate-driver **for its own run**. Either way exactly one gate-driver runs the quality-gate leg exactly once, so the intent above (one gate-driver per pipeline, one quality-gate invocation) still holds — warden is not a second concurrent gate-driver, it is the delegated one.
+
 ### When Used Standalone (user invokes directly)
 
 The user's session is the outermost orchestrator. When a user runs `/design` directly, the design skill produces the doc and documents it as gateable. The user's session (following the design skill's instructions) invokes quality-gate.
