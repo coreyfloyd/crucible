@@ -1,6 +1,6 @@
 ---
 name: temper
-description: Iteratively review code changes for production readiness through fresh-eyes review loops. Use when completing tasks, implementing major features, or before merging — including when the user says "review this PR", "review my changes", "code review", "check the diff", or "is this ready to ship". Works on PRs from any forge (GitHub, GitLab, Bitbucket, self-hosted) or on raw git SHA ranges.
+description: Iteratively review code changes for production readiness through fresh-eyes review loops. Use when completing tasks, implementing major features, or reviewing a change for production readiness — including when the user says "review this PR", "review my changes", "code review", "check the diff", or "is this ready to ship". Works on PRs from any forge (GitHub, GitLab, Bitbucket, self-hosted) or on raw git SHA ranges.
 ---
 
 # Temper

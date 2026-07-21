@@ -238,7 +238,7 @@ After quality-gate returns with a verdict, verify the verdict marker before writ
 4. Verify: marker exists, `Verdict` is `PASS`, `PipelineID` matches current build's PipelineID
 5. If verification passes: write `PASS` to the ledger with `Gate` timestamp and `Artifact` path
 6. If verification fails:
-   - **Normal flow** (marker missing/mismatched after a just-run gate): do NOT write PASS. Output warning and re-invoke quality-gate on the same artifact.
+   - **Normal flow** (marker missing/mismatched after a just-run gate): do NOT write PASS. Output warning and re-invoke warden on the same artifact (the full reviewer set — NOT bare `quality-gate`, else recovery downgrades to red-team-only and the I-W7 fail-open re-opens).
    - **INFERRED recovery** (PipelineID mismatch or missing marker on an INFERRED phase): prompt the user for the artifact path, then offer to run the gate or type SKIP GATE.
 7. After writing the ledger entry, delete the verdict marker (it has served its purpose). This applies to all verdict outcomes — PASS, FAIL, STAGNATION, and ESCALATED markers are all deleted after the corresponding ledger entry is written. [PLAN ADDITION — extends the design doc's PASS-only deletion to all verdict outcomes for cleanliness.]
 
@@ -1221,47 +1221,13 @@ After all tasks complete:
    - If any fail: implementation is incomplete. Identify what's missing, dispatch implementer to fix, re-run.
    - If all pass: feature is verifiably done. Proceed.
 2. Run full test suite (unit + integration)
-3. **RECOMMENDED SUB-SKILL:** Use crucible:checkpoint — create checkpoint with reason "pre-temper" before dispatching code review. If the iterative review fix cycle introduces regressions, this is the rollback target.
-3. **REQUIRED SUB-SKILL:** Use crucible:temper on full implementation (iterative until clean)
-4. **RECOMMENDED SUB-SKILL:** Use crucible:checkpoint — create checkpoint with reason "pre-inquisitor" before dispatching inquisitor. If the inquisitor's fix cycle produces regressions, this is the rollback target.
-4. **REQUIRED SUB-SKILL:** Use crucible:inquisitor on full implementation (dispatches 5 parallel dimensions against full feature diff)
-   - Input: `git diff <base-sha>..HEAD` where base-sha is the commit before Phase 3 execution began
-   - Runs after code review (obvious issues already fixed) and before quality gate (gate reviews final state)
-   - The inquisitor manages its own fix cycle internally — do not intervene unless it escalates
-   - See `crucible:inquisitor` for full process
-5. **Conditional:** If the inquisitor's fix cycle produced any code changes, re-run crucible:temper scoped to the inquisitor fix commits only (`git diff <pre-inquisitor-sha>..HEAD`)
-   - This is NOT a full implementation re-review — scope it to only the fixer's changes
-   - Iterative until clean, same as step 3
-   - Skip if the inquisitor reported all PASS (no fixes were needed)
-5.5. **CONDITIONAL: Security review via crucible:siege**
-   <!-- CANONICAL: shared/security-signals.md -->
-   a. **Contract check:** If a contract YAML exists for this ticket with `security_review.status: "required"`, siege is mandatory — skip to step (d).
-   b. **Code scan:** If no contract directive (or contract has `security_review.status: "recommended"` or field absent), scan for siege activation signals:
-      - **Scan targets:** design doc content + `git diff <base-sha>..HEAD` (changed file contents)
-      - **Method:** Case-insensitive keyword matching using the 7-category keyword lists from `shared/security-signals.md`
-      - Count distinct categories matched (one hit per category is sufficient)
-   c. **Threshold evaluation:**
-      - **0 signals:** Skip siege silently. No narration needed.
-      - **1 signal:** Log in narration: "1 security signal detected ([category]) — skipping siege. Invoke `/siege --force` manually if needed." Record in manifest and decision journal: `security-review | choice=skip | reason=1 signal ([category])`.
-      - **2+ signals:** Proceed to step (d).
-   d. **Dispatch siege:**
-      - **RECOMMENDED SUB-SKILL:** Use crucible:checkpoint — create checkpoint with reason "pre-siege" before dispatching siege. If siege's fix cycle produces regressions, this is the rollback target.
-      - Dispatch `crucible:siege` with:
-        - Target: design doc + full implementation diff (artifact type: `mixed`)
-        - `deployment_context`: from contract `security_review.deployment_context` if present, else unset (siege defaults to `public`)
-      - Narration: "Security signals detected: [list categories]. Dispatching siege."
-      - Decision journal: `security-review | choice=dispatch | reason=[N] signals ([categories]) [or contract-required]`
-      - **Session index event:** Emit to outbox: `{"ts":"<now>","seq":0,"type":"security_review","summary":"Siege dispatched: [N] signals detected","detail":{"skill":"build","signals":[categories]}}`
-   e. **Blocking behavior:** Siege iterates internally until zero Critical + zero High.
-      - If siege completes clean: continue to step 6 (quality-gate)
-      - If siege escalates (stagnation, user input needed): escalate to user with siege context
-      - If siege's fix cycle produced code changes: re-run crucible:temper scoped to siege fix commits only (`git diff <pre-siege-sha>..HEAD`). Same pattern as post-inquisitor conditional review at step 5.
-   f. **Escape hatches:** User can override automatic siege behavior:
-      - `--force-siege` — Dispatch siege regardless of signal count. Maps to siege's `--force` flag. Decision journal: `security-review | choice=force-dispatch | reason=user --force-siege flag`
-      - `--skip-siege` — Suppress siege even when signals/contract require it. Maps to siege's `--skip` flag. Decision journal: `security-review | choice=force-skip | reason=user --skip-siege flag`
-6. **RECOMMENDED SUB-SKILL:** Use crucible:checkpoint — create checkpoint with reason "pre-impl-gate" before dispatching the implementation quality gate. If gate fix rounds degrade the code, this is the rollback target.
-6. **REQUIRED SUB-SKILL:** Use crucible:quality-gate on full implementation (artifact type: "code"). Include in the dispatch context: `Phase: code` and `PipelineID: <current PipelineID>`. Iterates until clean or stagnation. **(Non-negotiable — see Quality Gate Requirement.)**
-6b. **Verify verdict marker and write Phase 4 PASS** to the gate ledger (see Verdict Marker Verification). Delete the verdict marker after writing the ledger entry.
+2.5. **Guarantee a fully-clean working tree before the review gate.** The Step-1/Step-2 test runs sit between the Phase-3 commit and the review gate and can leave residue — not only tracked modifications but also untracked artifacts. Run `git status --porcelain` and drive the tree to **fully empty** (tracked **and** untracked) by **producing** that clean state, not merely checking for one. Because `git status --porcelain` never lists `.gitignore`d paths, properly-ignored caches/coverage never appear, so the residual to classify is small and author-actionable:
+   - **Tracked modifications** (a passing test regenerated a golden file or updated a snapshot) → **commit** them: `git add -A && git commit -m "chore(build): commit test-regenerated artifacts before gate"`. This is normal output — committed, not flagged.
+   - **Non-ignored new untracked files** → classify each: a legitimately-generated file that belongs in the repo (a golden/fixture) → **commit** it (fold into the same commit); an incidental artifact that should never be tracked (coverage output, a cache) → **gitignore** it (a test-hygiene fix) so it stops appearing.
+   - There is **NO bare "assert-clean" branch.** An assert-clean would spuriously halt a *healthy* build whenever a passing test regenerates a golden file, and untracked test residue would make the review gate REFUSE inside a healthy build. build must **produce** the clean tree, not merely check for one.
+   - A tree that is **still** dirty or untracked *after* the commit/gitignore step is a **surfaced build/test defect** — surface it (error out) and stop; do NOT silently sweep it into the gate's first commit. End state: `git status --porcelain` empty (tracked **and** untracked), identical to the review gate's entry precondition.
+3. **REQUIRED SUB-SKILL:** Use crucible:warden on the full implementation — the consolidated pre-push review gate. Pass `reviewer-set: full`, `Phase: code`, and `PipelineID: <current PipelineID>`. warden runs the full reviewer set (temper + delve + red-team[quality-gate leg] + siege[conditional, same security-signal trigger] + inquisitor[unconditional in full]) as one disjunction-of-native-gates over a fully-clean tree (Step 2.5 guaranteed it), drives and commits every leg's fixes (non-`fix:` subjects), and emits the single build-`PipelineID` aggregate verdict marker. On `BLOCKED`, halt the pipeline (fail-closed). Do NOT separately invoke temper / inquisitor / siege / quality-gate here — warden is the sole code-leg gate-driver (I-W4).
+6b. **Verify warden's aggregate verdict marker and write Phase 4 PASS** to the gate ledger (see Verdict Marker Verification). The marker to verify is now **warden's** build-`PipelineID` aggregate verdict marker — warden owns it (it is no longer a temper or quality-gate marker). The READ mechanism (marker present + `Verdict: PASS` + PipelineID match) is unchanged; only the marker's owner/name changed. Delete the verdict marker after writing the ledger entry.
 7. **RECOMMENDED SUB-SKILL:** Use crucible:forge (retrospective mode) — capture what happened vs what was planned
 7.5. **Chronicle signal fallback:** If forge retrospective was skipped (user declined, session ending),
    append a minimal chronicle signal directly:
@@ -1275,7 +1241,7 @@ After all tasks complete:
 9. Compile summary: what was built, acceptance tests passing, review findings addressed, inquisitor findings, concerns
 10. Report to user
 10.5. **Session index event:** Emit a `skill_end` event to the outbox: `{"ts":"<now>","seq":0,"type":"skill_end","summary":"/build complete: <outcome summary>","detail":{"skill":"build","outcome":"success|failure|escalated"}}`.
-11. **REQUIRED SUB-SKILL:** Use crucible:finish — **skip finish's Step 2.5 (test-coverage)** since test-coverage ran per-task in Phase 3, and **skip finish's Step 3 (red-team)** since quality-gate already ran at step 6. Tell finish to skip both.
+11. **REQUIRED SUB-SKILL:** Use crucible:finish — **skip finish's warden call** (warden already ran in build Phase 4 at step 3 — this is the structural double-temper kill), **AND skip finish's Step 2.5 (test-coverage)** since test-coverage ran per-task in Phase 3. Tell finish to skip both.
 12. **Delete pipeline-active marker:** Remove `<scratch>/.pipeline-active`. This signals that the pipeline completed successfully. If deletion fails (permissions, missing file), log a warning but do not fail the pipeline.
 
 ### Session Metrics
@@ -1382,7 +1348,7 @@ Red-team, innovate, adversarial tester, and inquisitor prompts live in their res
 
 ## Quality Gate Orchestration
 
-Build is the outermost orchestrator and controls all quality gates via `crucible:quality-gate`. Quality gate wraps `crucible:red-team` internally — do NOT invoke red-team separately at these points.
+Build is the outermost orchestrator. The **design and plan** gates route via `crucible:quality-gate`; the **code** gate routes via `crucible:warden` (which drives the quality-gate red-team leg exactly once). Do NOT invoke red-team (or temper/inquisitor/siege) separately at these points.
 
 **Gate points in the pipeline:**
 
@@ -1390,9 +1356,9 @@ Build is the outermost orchestrator and controls all quality gates via `crucible
 |---------------|---------------|----------|
 | Phase 1, Step 2 (after design) | design | Existing `crucible:red-team` on design |
 | Phase 2, Step 3 (after plan review) | plan | Existing `crucible:red-team` on plan |
-| Phase 4, Step 6 (after inquisitor + conditional re-review) | code | Existing `crucible:red-team` on implementation |
+| Phase 4 (single warden gate) | code | `crucible:warden` — runs the red-team leg (+ temper/delve/inquisitor/siege) |
 
-Code review (`crucible:temper`) and inquisitor (`crucible:inquisitor`) remain separate from the quality gate — temper does structured quality checks, inquisitor writes cross-component adversarial tests, and the quality gate does adversarial artifact review. All three serve distinct purposes.
+For the **code leg**, code review (`crucible:temper`), inquisitor (`crucible:inquisitor`), and the quality-gate red-team leg are now consolidated inside `crucible:warden` — temper does structured quality checks, inquisitor writes cross-component adversarial tests, and the red-team leg does adversarial artifact review (plus delve and a conditional siege run). The three purposes still stand, but warden drives them as one disjunction-of-native-gates rather than as separate steps.
 
 ### Contract-Aware Quality Gate
 
@@ -1436,12 +1402,13 @@ When a contract YAML exists for the current ticket, the quality gate adds contra
 - **crucible:quality-gate** — Iterative red-teaming at each quality gate point
 - **crucible:red-team** — Adversarial review engine (invoked by quality-gate)
 - **crucible:innovate** — Creative enhancement before quality gates
-- **crucible:inquisitor** — Full-feature cross-component adversarial testing (Phase 4, after temper, before quality-gate)
+- **crucible:inquisitor** — Full-feature cross-component adversarial testing (Phase 4, inside the warden gate)
+- **crucible:warden** — Consolidated pre-push code-review gate (Phase 4): temper + delve + quality-gate red-team leg + conditional siege + inquisitor as one disjunction-of-native-gates.
 
 **Recommended sub-skills:**
 - **crucible:forge** — Feed-forward at Phase 1 start, retrospective at Phase 4 completion
 - **crucible:cartographer-skill** — Consult at Phase 1 start, load at Phase 3 dispatches, record at Phase 4
-- **crucible:checkpoint** — Shadow git checkpoints at pipeline boundaries (pre-design-gate, pre-plan-gate, pre-wave-N, pre-cleanup-task-N, pre-temper, pre-inquisitor, pre-impl-gate)
+- **crucible:checkpoint** — Shadow git checkpoints at pipeline boundaries (pre-design-gate, pre-plan-gate, pre-wave-N, pre-cleanup-task-N)
 
 **Recon/assay context:** Inherits recon/assay context through /design (Phase 1). No direct dispatch. When design integrates recon, build benefits automatically. See #147 for rationale.
 

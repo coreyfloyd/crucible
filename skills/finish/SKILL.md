@@ -40,38 +40,20 @@ Stop. Don't proceed to Step 2.
 
 **If tests pass:** Continue to Step 2.
 
-### Step 2: Code Review (Mandatory)
+### Step 2: Review Gate (Mandatory)
 
-**Before presenting options, run a full code review.**
+**Before presenting options, run the consolidated pre-push review gate.**
 
-**REQUIRED SUB-SKILL:** Use crucible:temper
+**REQUIRED SUB-SKILL:** Use crucible:warden — the single review gate that runs the full reviewer set (temper + delve + red-team + siege[conditional] + inquisitor[conditional standalone]) as one disjunction-of-native-gates and drives-then-commits every leg's fixes before emitting one `PASS`/`BLOCKED` verdict. This subsumes the old separate code-review (temper) and red-team steps.
 
-1. Get base and head SHAs:
-```bash
-BASE_SHA=$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master)
-HEAD_SHA=$(git rev-parse HEAD)
-```
+- **Standalone `/finish`:** finish supplies no build `Phase`/`PipelineID`, so warden auto-detects the **`standalone`** reviewer-set (the narrower per-push set — a non-regression, since finish previously ran no inquisitor at all).
+- **finish invoked from build:** build passes context and tells finish to **skip this warden call** — warden already ran in build Phase 4. Do NOT re-run it here (see build's finish-skip step).
 
-2. Check diff size to determine review approach:
-```bash
-git diff --stat $(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master)...HEAD
-```
+**Disclosed behavior change — dirty-tree hard-REFUSE:** warden asserts a **fully-clean working tree** (tracked **and** untracked) at entry, and finish has **no clean-tree gate of its own**, so a standalone `/finish` on a dirty or untracked tree now **hard-REFUSES**. Commit (or otherwise clear) all tracked changes and untracked files before running `/finish`.
 
-3. Dispatch a code review subagent (general-purpose) using the `temper/temper-reviewer.md` template with:
-   - What was implemented (summary of branch work)
-   - The plan or requirements it was built against
-   - Base and head SHAs
-   - Brief description
-   - For large diffs (20+ files changed): provide the `--stat` summary and key files list, let the reviewer pull targeted diffs rather than receiving the entire diff. Consider splitting into multiple focused reviewers -- one per subsystem.
+**Hard BLOCK on `BLOCKED` (non-negotiable):** if warden returns `BLOCKED`, this is a hard stop — the same block semantics as **Step 5.5 Pre-Push Validation**. Do **NOT** present the merge/PR options (Option 1 merge, Option 2 push + PR); only cleanup options (keep-as-is / discard) may proceed. Report the blocking findings. Do not push "then fix in CI"; do not merge "then fix on base."
 
-4. Act on feedback:
-   - **Critical issues:** Fix immediately. Re-run tests. Do NOT proceed.
-   - **Important issues:** Fix before proceeding. Re-run tests.
-   - **Minor issues:** Note them. Fix if quick, otherwise include in PR description.
-
-5. If fixes were made, re-run tests to confirm nothing broke.
-
-**Do NOT skip this step.** The orchestrator did lightweight review during execution -- this is the comprehensive review before integration.
+**Do NOT skip this step.** The orchestrator did lightweight review during execution -- this is the comprehensive gate before integration.
 
 ### Step 2.5: Test Alignment Audit
 
@@ -89,21 +71,6 @@ The test-coverage skill handles its own fix dispatch and revert-on-failure logic
 ### Step 2.75: Forge Retrospective
 
 **RECOMMENDED SUB-SKILL:** Use crucible:forge (retrospective mode) — capture what happened vs what was planned while execution context is still fresh. Run this BEFORE red-team so the retrospective has access to the full execution state.
-
-### Step 3: Red-Team the Implementation (Mandatory)
-
-**After code review passes, red-team the full implementation.**
-
-**REQUIRED SUB-SKILL:** Use crucible:red-team
-
-1. Dispatch `crucible:red-team` on the full implementation:
-   - Artifact: the complete set of changes on this branch (provide `git diff --stat` and key files)
-   - Context: the design doc or plan this was built against
-   - Fix mechanism: dispatch fix subagent for any findings
-2. The red-team skill handles the iterative loop (fresh Devil's Advocate each round, stagnation detection)
-3. Fix all Fatal/Significant findings before proceeding
-
-**Do NOT skip this step.** Code review checks quality; red-teaming checks whether the system will actually work and survive real use.
 
 ### Step 3.5: Noticed But Not Touching — Optional Issue Conversion
 

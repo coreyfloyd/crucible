@@ -41,6 +41,14 @@ run python3 scripts/check_crossref.py --selftest
 run python3 scripts/check_crossref.py
 run python3 scripts/catalog.py check
 
+# --- warden structural checks (#464) ---
+run python3 scripts/check_warden_structure.py --selftest
+run python3 scripts/check_warden_structure.py
+run python3 scripts/check_build_clean_tree_contract.py --selftest
+run python3 scripts/check_build_clean_tree_contract.py
+run python3 scripts/check_warden_integration.py --selftest
+run python3 scripts/check_warden_integration.py
+
 # --- Receipt-verify (rcpt_verify) ---
 run python3 scripts/rcpt_verify.py --selftest
 run python3 scripts/test_rcpt_verify.py
@@ -137,6 +145,11 @@ run python3 scripts/check_siege_helper_drift.py --selftest
 run python3 scripts/check_siege_helper_drift.py
 run python3 scripts/check_siege_gt_provenance.py --selftest
 run python3 scripts/check_siege_gt_provenance.py
+
+# --- warden eval harness (#464) ---
+run python3 -m pytest skills/warden/evals/ -q
+run python3 scripts/check_warden_helper_drift.py --selftest
+run python3 scripts/check_warden_helper_drift.py
 
 # --- Catalog unit suite ---
 run python3 scripts/test_catalog.py
