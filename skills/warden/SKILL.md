@@ -388,5 +388,106 @@ Enforcement teeth:
   named and consistent. No git hook (rejected: per-push Opus fan-out cost +
   install friction; may revisit as an opt-in follow-up).
 
+## Verdict marker ownership (F2 — single build-tagged emitter)
+
+Two facts make a naive delegation fail-open: quality-gate *always* writes its
+marker even as a sub-skill (`quality-gate/SKILL.md:1111`) and *never* deletes it
+("build orchestrator is responsible for their lifecycle"). If warden invoked the
+red-team leg with **build's** PipelineID, both the leg and warden would write a
+`gate-verdict-*.md` carrying build's PipelineID with potentially divergent
+verdicts, and build's most-recent-by-Timestamp verification
+(`skills/build/SKILL.md:231-243`) would resolve the ambiguity only by timing luck.
+So:
+
+- warden invokes the quality-gate red-team leg with **warden's own run-id** as the
+  PipelineID (and `Phase: code`), **not** build's PipelineID. A PipelineID is
+  present, so the leg stays **non-interactive** — quality-gate does not drop into
+  standalone between-rounds check-in mode (`quality-gate/SKILL.md:1111`; this
+  resolves M3) — while its `gate-verdict-<warden-run-id>.md` marker carries
+  warden's run-id and therefore **never matches build's PipelineID filter**.
+- warden writes the **one** `gate-verdict-*.md` that carries **build's** PipelineID
+  (and `Phase: code`), stamped with warden's **aggregate** verdict.
+- build's Verdict Marker Verification **read** logic — glob → PipelineID-filter →
+  PASS-check (`skills/build/SKILL.md:231-243`) — is **unchanged** and now resolves
+  **deterministically**: its filter surfaces exactly one marker (warden's
+  aggregate), because the leg's marker is tagged with a different (warden)
+  PipelineID.
+
+What **does** change is deferred to **Phase E**: the two build sites that hard-name
+`quality-gate` — the recovery re-invoke on a missing/mismatched marker
+(`build/SKILL.md:241`) and the Step-6 gate invocation (`build/SKILL.md:1263`) —
+must **repoint to `warden`** (Tasks 12/16). If the recovery re-invoke were left
+naming `quality-gate`, a crashed/orphaned warden run would recover as a **bare
+red-team-only** gate (no temper/delve/inquisitor/siege) — a coverage fail-open in
+the recovery path; repointing both to warden closes it. This is invariant **I-W7**.
+(This task authors the marker-ownership prose only; it does **not** edit build —
+the repoint lands in Phase E.)
+
+## Calibration-ledger entries — each leg self-emits, warden emits none
+
+warden emits **no** `code` calibration entry to `runs.jsonl` — it writes
+no calibration row of its own. Each leg **self-emits its native per-skill calibration
+entry**, exactly as it does under build today: temper's Tier-A `code` entry
+(`temper/SKILL.md:323`), siege's (`siege/SKILL.md:690`), the quality-gate red-team
+leg's terminal `code` entry (`quality-gate/SKILL.md:1066`, unconditional), and
+delve's and inquisitor's Tier-B **stub** `code` entries (`delve/SKILL.md:164`,
+`inquisitor/SKILL.md:222`; `backfilled:false`, no merge verdict — a stub entry, not
+*no* entry). None are suppressed, and **no leg's SKILL.md is edited** (Option C).
+
+warden **mirrors build** — the existing orchestrator that dispatches these very
+same calibrated legs and has **zero `runs.jsonl` touchpoints** (build self-emits
+nothing; every leg emits its own entry, which is what per-skill Brier is *for*).
+warden's verdict is a *determined disjunction* of its legs' native verdicts (the
+boolean OR), so it carries no predictive content beyond that OR; any aggregate
+`confidence` / `predicted_falsifier` would be **synthesized** from the legs — a
+double-count. No independent content → no independent calibration row. Per-skill
+Brier stays fed by the leg entries, and per-leg falsification resolution (which leg
+missed a bug) is **preserved** — it would be *lost* under a single aggregate entry.
+
+**Inherited attribution imprecision (warden neither introduces nor solves it).**
+These co-timed leg `code` entries over overlapping files attribute
+**earliest-first** in `reconcile_ledger.py`'s skill-blind walkback
+(`reconcile_ledger.py:352-377`, no tier and no confidence filter). warden **adds
+delve's Tier-B stub entries** — which build's Phase 4 lacked: warden runs delve
+several times per gate, each a distinct `run_id` (UUIDv7, **not** deduped by the
+`(run_id, skill)` emit key), so a 2-iteration fix path is initial +
+(`--fix` + recheck)×2 + step-4 ≈ **up to ~6** distinct stubs — but **no aggregate
+row**. The earliest-first, skill-blind attribution is therefore **unchanged in
+kind** from build's inherited imprecision: a delve stub can become the earliest
+overlapping `code` entry and absorb a future fix's falsification exactly as build's
+own **inquisitor** stub already can. **The change from build is one of
+degree, not kind (M-5):** ~6× the stub surface (up to ~6 delve stubs per warden run vs build's
+single inquisitor stub), which correspondingly **raises** — while keeping bounded —
+the probability a low-value stub absorbs a future falsification. It is an inherited,
+bounded tradeoff — out of scope to fix (the fix would need the `reconcile_ledger.py`
+tier filter this design explicitly rejects) — stated plainly so it is not mistaken
+for something warden solved.
+
+Consistent with the LOCKED double-siege decision, warden does **not** pass
+`skip_siege`/`force_siege` to the quality-gate red-team leg (they are real
+`quality-gate/SKILL.md:187-188` params); suppressing the QG-internal siege would
+silently break warden's second siege pass (I-W4). Per-leg forensics at gate time
+also live in (a) the sectioned-per-reviewer report (I-W2) and (b) the per-reviewer
+receipts bound into `receipt-ledger.jsonl` (see Dispatch + return conventions).
+This is invariant **I-W8**.
+
+## Double-run avoidance
+
+warden writes a coverage marker keyed by the **pre-run base SHA** (the HEAD warden
+observed at entry, *before* its own fixer legs mutate HEAD) + reviewer-set. Keying
+on the pre-run base — not the post-fix HEAD warden itself moves — means a legitimate
+immediate re-run over the same starting state matches the marker and is skipped,
+rather than misfiring because warden's own fix commits changed HEAD (M4). build's
+finish-skip instruction is the **primary** guard; the marker is the backstop so a
+standalone warden immediately after a build doesn't re-run the identical set.
+
+**M-b caveat:** the marker is **near-inert exactly when warden committed fixes** —
+once warden's fixer legs move HEAD, an immediate re-run's pre-run base is the *new*
+post-fix HEAD, which no longer matches the prior run's recorded base, so the skip
+does not fire. The marker therefore only helps after a **clean, no-commit** warden
+pass; whenever warden actually did work, build's finish-skip is the only guard that
+prevents a re-run. This is acceptable (a double-run is wasteful, not incorrect), but
+the marker must not be relied on as the de-dup mechanism after a fixing run.
+
 <!-- SCAFFOLD: later #464 Phase-A tasks author the remaining sections
-(double-run avoidance, integration, invariants). -->
+(routing boundary, dispatch + return conventions, integration mapping, invariants). -->

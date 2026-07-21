@@ -30,6 +30,13 @@ plain delve, NOT a `temper-reviewer` re-run, so a `temper-reviewer.md` dispatch
 trips it while a bare-word prose mention ("NOT a `temper-reviewer` re-run") does
 not. Exits 0 when every clause is present and no
 forbidden construct is found, 1 with a per-clause diff summary otherwise.
+Task 6 adds the marker-ownership (I-W7) / Option-C no-emit / I-W8 / double-run
+(M4) required clauses, plus two scoped command-form negatives: the no-emit guard
+(an imperative `emit`/`ledger_append` call — matched over warden's emission
+surface, SKILL.md PLUS `scripts/check_warden_*.py`, excluding `skills/warden/evals/`
+by construction — while a descriptive `runs.jsonl`/emit prose token does NOT trip)
+and the T-W13 siege-suppression guard (`skip_siege:`/`force_siege:`/`--skip-siege`
+in param/flag form, not a bare substring).
 Stdlib only, no argparse.
 
 Style mirrors `scripts/check_canonical_drift.py`: ROOT-from-`__file__`, error
@@ -94,6 +101,12 @@ REQUIRED_SUBSTRINGS: dict[str, str] = {
         "an unrun gate is not a pass",
     "condition-skipped is a normal PASS input, not a failure (M5)":
         "normal PASS input, not a failure",
+    # Task 6 — marker ownership (I-W7) + Option-C no-emit ledger (I-W8) +
+    # double-run marker, design L511-598 + L687-702.
+    "marker ownership: warden's own run-id (I-W7)": "warden's own run-id",
+    "I-W8 no-calibration-emit clause": "no calibration",
+    "M-5 degree-not-kind attribution disclosure": "degree, not kind",
+    "double-run pre-run-base marker (M4)": "pre-run base",
 }
 
 # label -> alternatives; at least ONE must appear (an OR clause). The dispatch
@@ -153,6 +166,28 @@ _FORBIDDEN_GIT_STASH = re.compile(r"\bgit\s+stash\b(?!\s+create\b)")
 # followed by a backtick + " re-run", not `.md`) does NOT trip.
 _FORBIDDEN_TEMPER_REVIEWER = re.compile(r"\btemper-reviewer(?:\.md\b|/)")
 
+# S4 / Option-C no-emit guard (I-W8) — warden emits NOTHING to `runs.jsonl`. This
+# matches an IMPERATIVE ledger emit *call* — an `emit`/`ledger_append` invocation
+# with an opening paren — and NEVER a descriptive prose token. Same command-form
+# split as the R12 `git stash` crux: match the call, not the bare word. A
+# descriptive mention ("each leg self-emits to `runs.jsonl`; warden emits none")
+# does NOT trip — "self-emits"/"emits none" have no `(` after "emit". Because the
+# emission-surface scan (`check_emission_surface_files`) greps this checker's OWN
+# source too, no docstring/error/sample below may contain a contiguous
+# emit-then-paren token (the imperative selftest sample is built by concatenation
+# for exactly this reason).
+_FORBIDDEN_LEDGER_EMIT = re.compile(r"\b(?:emit|ledger_append)\s*\(")
+
+# T-W13 no-siege-suppression guard — warden's QG-leg dispatch must NOT pass the
+# real `quality-gate/SKILL.md:187-188` siege-suppression params, which would
+# silently break the LOCKED double-siege decision (I-W4 / design L777-781). Match
+# the token in dispatch-PARAM / FLAG form only — `skip_siege:` / `force_siege:` as
+# a dispatch key, or `--skip-siege` as a flag — NOT a bare substring, so
+# descriptive prose ("warden does NOT pass `skip_siege` to the QG leg", backtick
+# form, no `:`) does not false-trip. Parity with the R12 command-form split.
+_FORBIDDEN_SIEGE_SUPPRESS = re.compile(
+    r"(?:\b(?:skip_siege|force_siege)\s*:|--skip-siege\b)")
+
 
 def check_frontmatter(text: str) -> list[str]:
     """The `name: warden` scalar and a `description:` line must be present in
@@ -211,6 +246,34 @@ def check_negatives(text: str) -> list[str]:
         errs.append(f"forbidden `temper-reviewer` dispatch/reference present "
                     f"(R13): {m.group(0)!r} — the terminating freeze-guard is "
                     "plain delve report-only, not a temper-reviewer re-run")
+    m = _FORBIDDEN_LEDGER_EMIT.search(text)
+    if m:
+        errs.append(f"forbidden imperative ledger emit present "
+                    f"(no-emit / Option C / I-W8): {m.group(0)!r} — warden emits "
+                    "NOTHING to runs.jsonl; each leg self-emits its own entry")
+    m = _FORBIDDEN_SIEGE_SUPPRESS.search(text)
+    if m:
+        errs.append(f"forbidden siege-suppression param present (T-W13): "
+                    f"{m.group(0)!r} — warden must not pass skip_siege/force_siege "
+                    "to the QG red-team leg (breaks the LOCKED double-siege, I-W4)")
+    return errs
+
+
+def check_emission_surface_files() -> list[str]:
+    """Option-C no-emit / I-W8 also greps warden's shipped SCRIPTS —
+    `scripts/check_warden_*.py` — for an imperative ledger emit, on top of
+    `skills/warden/SKILL.md` (already scanned by `check_negatives` via
+    `check_text`). Together those two are warden's whole emission surface. It does
+    NOT grep the entire `skills/warden/` tree: `skills/warden/evals/` (authored by
+    Task 10) legitimately MENTIONS `runs.jsonl` in fixtures/docstrings when
+    describing the per-leg self-emit, and is excluded by construction — this scan
+    reads only SKILL.md (via `check_text`) + `scripts/check_warden_*.py` here."""
+    errs: list[str] = []
+    for path in sorted((ROOT / "scripts").glob("check_warden_*.py")):
+        m = _FORBIDDEN_LEDGER_EMIT.search(path.read_text(encoding="utf-8"))
+        if m:
+            errs.append(f"forbidden imperative ledger emit in scripts/{path.name} "
+                        f"(no-emit / Option C / I-W8): {m.group(0)!r}")
     return errs
 
 
@@ -289,6 +352,22 @@ on a dirty tree REFUSES: commit, stash, or clean untracked files, then re-run.
    it writes nothing into the frozen HEAD. This is plain delve, not a
    `temper-reviewer` re-run.
 
+## Verdict marker ownership (F2)
+
+warden invokes the quality-gate red-team leg with warden's own run-id as the
+PipelineID, not build's, and writes the one build-PipelineID aggregate marker (I-W7).
+
+## Calibration-ledger entries
+
+warden emits no calibration row to `runs.jsonl`; each leg self-emits its native
+entry (I-W8). The change from build is one of degree, not kind (M-5). warden does
+not pass `skip_siege`/`force_siege` to the QG leg.
+
+## Double-run avoidance
+
+warden writes a coverage marker keyed by the pre-run base SHA + reviewer-set (M4);
+build's finish-skip is the primary guard, the marker a backstop.
+
 ## Gate + enforcement
 
 warden's verdict is `BLOCKED` if any run reviewer's native gate trips. Escalation
@@ -364,6 +443,35 @@ _TEMPER_REVIEWER_PROSE_SAMPLE = (
 # flagged. Removing the "an unrun gate is not a pass" clause trips its label.
 _GATE_MISSING_UNRUN_SAMPLE = _GOOD_SAMPLE.replace(
     "an unrun gate is not a pass", "it is fine")
+
+# ---- Task 6 Option-C no-emit / I-W8 + T-W13 siege-suppression samples ---------
+# (a) THE OPTION-C ALLOW (parity with the R12 crux): an evals-style DESCRIPTIVE
+#     mention of runs.jsonl/emit must NOT trip the no-emit negative — only an
+#     imperative emit *call* does. "self-emits"/"emits none" have no `(`.
+_DESCRIPTIVE_EMIT_SAMPLE = (
+    "Each leg self-emits its native `code` entry to `runs.jsonl`; warden emits "
+    "none. delve self-emits a Tier-B stub; the fixture asserts one runs.jsonl "
+    "row per leg.\n")
+
+# (b) an IMPERATIVE ledger emit call in the SKILL.md must FAIL. Built by
+#     concatenation so THIS checker's own source never carries a contiguous
+#     emit-then-paren token — the emission-surface scan greps check_warden_*.py
+#     (incl. this file), so a literal call here would self-trip.
+_IMPERATIVE_EMIT_SAMPLE = (
+    _GOOD_SAMPLE + "\nAt gate end warden runs " + "emit" + "(warden_code_row) "
+    "to append its own aggregate verdict.\n")
+
+# (c) T-W13 — a warden QG-dispatch that passes `skip_siege: true` (param form)
+#     must FAIL: it would silently suppress warden's second siege (I-W4).
+_SKIP_SIEGE_DISPATCH_SAMPLE = (
+    _GOOD_SAMPLE + "\nDispatch the QG red-team leg with:\n  reviewer-set: full\n"
+    "  skip_siege: true\n")
+
+# (d) THE CRUX allow-case: descriptive prose that NAMES `skip_siege` to state the
+#     guard must NOT trip T-W13 (backtick form, no `:` key / `--` flag).
+_SKIP_SIEGE_PROSE_SAMPLE = (
+    "warden deliberately does NOT pass `skip_siege` or `force_siege` to the QG "
+    "red-team leg — it never suppresses the second siege.\n")
 
 
 def selftest() -> int:
@@ -443,13 +551,37 @@ def selftest() -> int:
     assert any("unrun gate is not a pass" in e for e in g_errs), (
         f"dropping the dead-leg fail-closed clause should be flagged, got: {g_errs}")
 
+    # 9. Task-6 Option-C no-emit negative (I-W8) — descriptive allow + imperative
+    #    FAIL (the scoped no-emit case-pair).
+    de_errs = check_negatives(_DESCRIPTIVE_EMIT_SAMPLE)
+    assert all("no-emit" not in e for e in de_errs), (
+        f"descriptive runs.jsonl/emit mention must NOT trip no-emit, got: {de_errs}")
+    ie_errs = check_negatives(_IMPERATIVE_EMIT_SAMPLE)
+    assert any("no-emit" in e for e in ie_errs), (
+        f"imperative ledger emit call should trip no-emit, got: {ie_errs}")
+
+    # 10. Task-6 T-W13 siege-suppression negative — param FAIL + prose allow (the
+    #     scoped no-siege-suppression case-pair).
+    ss_errs = check_negatives(_SKIP_SIEGE_DISPATCH_SAMPLE)
+    assert any("T-W13" in e for e in ss_errs), (
+        f"`skip_siege: true` param should trip T-W13, got: {ss_errs}")
+    sp_errs = check_negatives(_SKIP_SIEGE_PROSE_SAMPLE)
+    assert all("T-W13" not in e for e in sp_errs), (
+        f"descriptive `skip_siege` prose must NOT trip T-W13, got: {sp_errs}")
+    # (The emission-surface scan over the shipped scripts is a filesystem check,
+    # so it stays in `main()` — not here — keeping `--selftest` purely in-memory.)
+
     print("selftest OK — GOOD passes; each required clause (incl. OR clauses), "
           "the I-W1 normalization negative, the R11 `git commit -a` and R12 "
           "`git stash`-command negatives (with the REFUSE-clause bare-word and "
           "`git stash create` allow-cases), the R13 `temper-reviewer` "
           "reference-form negative (a: `temper-reviewer.md` dispatch FAILS; "
-          "b: bare-word prose 'NOT a temper-reviewer re-run' does NOT trip), and "
-          "the frontmatter guard each have an exercised path.")
+          "b: bare-word prose 'NOT a temper-reviewer re-run' does NOT trip), the "
+          "Task-6 Option-C no-emit negative (descriptive runs.jsonl/emit mention "
+          "does NOT trip; an imperative emit-call FAILS) and its emission-surface "
+          "scan over check_warden_*.py, the T-W13 siege-suppression negative "
+          "(`skip_siege: true` param FAILS; descriptive `skip_siege` prose does "
+          "NOT trip), and the frontmatter guard each have an exercised path.")
     return 0
 
 
@@ -466,6 +598,7 @@ def main() -> int:
         return 1
 
     errs = check_text(SKILL.read_text(encoding="utf-8"))
+    errs.extend(check_emission_surface_files())
     if errs:
         print("WARDEN STRUCTURE CHECK FAILED:")
         for e in errs:
