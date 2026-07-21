@@ -119,6 +119,43 @@ REQUIRED_SUBSTRINGS: dict[str, str] = {
     # Task 7 — Routing boundary (S7) + phrase-ownership / I-W3, design L638-671.
     "phrase-ownership table header (S7)": "| Phrase / intent | Owner | Why |",
     "warden does NOT claim temper's phrases (I-W3)": "does **not** claim temper's",
+    # Task 8 — API surface + invariants list + test obligations, design L712-1097.
+    # The `--effort` flag (M-o4) must be documented so it is not silently dropped;
+    # warden has NO `--fix` flag (it fixes-then-certifies); a sub-skill dispatch
+    # omitting `reviewer-set` fail-safe-defaults to `full` (I-W9). The I-Wx / T-Wx
+    # literals are matched in COLON-list form (`I-W1:` / `T-W1:`) so each is a
+    # precise assertion: bare `T-W1` is a substring of `T-W10`..`T-W14`, which would
+    # make the individual check vacuous (any higher token would satisfy it) and its
+    # auto-RED case mangle the whole list. `T-W1:` is NOT a substring of `T-W10:`,
+    # so the colon disambiguates. T-W10 is RETIRED (design L913-916) — NOT required
+    # (only its `retired` note is), so no RED case demands it back.
+    "M-o4: --effort flag (API surface)": "--effort low|medium|high",
+    "no `--fix` flag (API surface)": "no `--fix` flag",
+    "reviewer-set fail-safe default → full (I-W9)": "defaults to `full`",
+    "Invariants section header": "## Invariants",
+    "T-W10 retirement note": "retired",
+    "invariant I-W1": "I-W1:",
+    "invariant I-W2": "I-W2:",
+    "invariant I-W3": "I-W3:",
+    "invariant I-W4": "I-W4:",
+    "invariant I-W5": "I-W5:",
+    "invariant I-W6": "I-W6:",
+    "invariant I-W7": "I-W7:",
+    "invariant I-W8": "I-W8:",
+    "invariant I-W9": "I-W9:",
+    "test obligation T-W1": "T-W1:",
+    "test obligation T-W2": "T-W2:",
+    "test obligation T-W3": "T-W3:",
+    "test obligation T-W4": "T-W4:",
+    "test obligation T-W5": "T-W5:",
+    "test obligation T-W6": "T-W6:",
+    "test obligation T-W7": "T-W7:",
+    "test obligation T-W8": "T-W8:",
+    "test obligation T-W9": "T-W9:",
+    "test obligation T-W11": "T-W11:",
+    "test obligation T-W12": "T-W12:",
+    "test obligation T-W13": "T-W13:",
+    "test obligation T-W14": "T-W14:",
 }
 
 # I-W3 — the owned trigger phrases warden's `description` must NOT carry. Each
@@ -454,6 +491,39 @@ The discriminator is whole-set gate (warden) vs single reviewer.
 | "find bugs in this diff", "instance-bug sweep" | delve | report-only bug finder |
 
 warden deliberately does **not** claim temper's "is this ready to ship" phrases (I-W3).
+
+## API Surface
+
+`/warden [scope] [--effort low|medium|high]` — warden fixes-then-certifies, so there is no `--fix` flag. A sub-skill dispatch that omits `reviewer-set` defaults to `full`.
+
+## Invariants
+
+**Checkable by inspection:**
+- I-W1: warden never converts one reviewer's severity into another's scale.
+- I-W2: one section per run reviewer; no merged ranking.
+- I-W3: description guard (see Routing boundary).
+- I-W4: red-team via quality-gate; siege twice (see Calibration-ledger entries).
+- I-W5: exactly one warden call site each in build/finish.
+- I-W6: ordering + clean-tree inductive base (see Ordering).
+- I-W7: single build-tagged marker (see Verdict marker ownership).
+- I-W8: legs self-emit; warden emits no `code` row.
+- I-W9: a sub-skill dispatch that omits `reviewer-set` defaults to `full`.
+
+**Requires tests:**
+- T-W1: one native gate trip → BLOCKED.
+- T-W2: siege conditional on a security surface.
+- T-W3: standalone inquisitor conditional on diff shape.
+- T-W4: double-temper killed.
+- T-W5: one build-tagged marker; leg marker not surfaced.
+- T-W6: clean diff → PASS.
+- T-W7: routing selection-eval.
+- T-W8: full-set inquisitor unconditional.
+- T-W9: ordering — residual commits + terminating re-check.
+- T-W10: *retired.*
+- T-W11: delve leg bounded convergence.
+- T-W12: build recovery re-invokes warden.
+- T-W13: siege twice per run (see Calibration-ledger entries).
+- T-W14: temper-only fixer → frozen HEAD contains the fix.
 """
 
 # The negation prose above must NOT trip the I-W1 guard; a real

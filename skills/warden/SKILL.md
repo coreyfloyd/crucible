@@ -37,7 +37,7 @@ The "Runs" column is split by **reviewer-set** (the dispatch parameter
 |---|---|---|---|---|
 | temper | always | always | `T = {CONFIRMED,PLAUSIBLE} × {Critical,Important}` non-empty | the merge-verdict loop |
 | delve | always | always | any kept finding at `{CONFIRMED,PLAUSIBLE} × {Critical,Important}` (trio scale; `PLAUSIBLE@Crit/Imp` is a real regression per contract) | delve is **report-only with no fix loop** — warden applies the predicate to delve's kept findings and owns the fix path (see Fix behavior) |
-| red-team (via quality-gate) | always | always | quality-gate verdict ≠ PASS (Fatal>0 ∨ Significant>0) | delegates to existing `crucible:quality-gate` on the `code` artifact to reuse its red-team loop, invoked so the QG leg **re-dispatches siege** exactly as build's Step-6 gate does (warden does **not** suppress the QG-internal siege) — the second of warden's two siege passes (I-W4 / S-A); the leg's marker is **not** build-tagged (see Integration mapping / I-W7) — warden owns the aggregate verdict marker; it writes **no** calibration ledger entry (each leg self-emits its native entry, I-W8) |
+| red-team (via quality-gate) | always | always | quality-gate verdict ≠ PASS (Fatal>0 ∨ Significant>0) | delegates to existing `crucible:quality-gate` on the `code` artifact to reuse its red-team loop, invoked so the QG leg **re-dispatches siege** exactly as build's Step-6 gate does (warden does **not** suppress the QG-internal siege) — the second of warden's two siege passes (I-W4 / S-A); the leg's marker is **not** build-tagged (see §Verdict marker ownership / I-W7) — warden owns the aggregate verdict marker; it writes **no** calibration ledger entry (each leg self-emits its native entry, I-W8) |
 | siege | conditional — security-surface diff (reuse build's existing Step 5.5 trigger) | conditional — same security-surface trigger | Critical>0 ∨ High>0 | heavy 6-agent Opus audit; not run on non-security diffs. **siege is warden's own native leg on its own CVSS scale** (disjunction-of-native-gates, a LOCKED decision). warden sieges **twice**, **coverage-equal to build's two sieges (position redistributed across the two passes)**: warden's own siege leg at step-1 HEAD (≈ build Step 5.5), and the QG red-team leg's internal siege auto-dispatch at `SHA_pre_redteam` (≈ build Step 6) — the QG leg is invoked so it **re-dispatches** its internal siege as build does (warden does **not** suppress it) (I-W4 / S-A) |
 | inquisitor | **always (unconditional)** — preserves build Phase 4 Step 4 coverage | conditional — `>1 changed file OR >1 top-level module touched` | any adversarial test `Result: FAIL` | heavy 5-dim fan-out. In the `full` set it stays unconditional so a single-file build does **not** lose the inquisitor pass it gets today; the diff-shape condition applies only standalone, where per-push cost matters |
 
@@ -104,13 +104,13 @@ swept into the first leg's `chore(warden):` commit). A standalone `/warden` on a
 **dirty-or-untracked** tree **REFUSES** with an
 actionable error (`commit, stash, or clean untracked files, then re-run /warden`) —
 matching how warden already treats a detached HEAD (require explicit action from the
-user). Inside **build**, build **guarantees** a fully-clean tree at warden entry (see the
-build-side integration requirement in Integration mapping): a dirty **or untracked** tree
+user). Inside **build**, build **guarantees** this at warden entry (the build Phase 4
+clean-tree rule): a dirty **or untracked** tree
 at build→warden entry is a **surfaced build/test defect** (warden errors) — it is never
 silently swept into the first `chore(warden):` commit. **Standalone `/warden` and
 standalone `/finish` both fall to the assert-and-REFUSE rule** (only *build* supplies a
-clean-tree guarantee — finish has no clean-tree gate of its own; see the finish
-integration note). Without this asserted base the per-leg residual is not well-defined; it
+clean-tree guarantee — finish has no clean-tree gate of its own; see §Failure modes,
+"Standalone finish … through warden"). Without this asserted base the per-leg residual is not well-defined; it
 is the base of the induction that makes the frozen HEAD provably contain every leg's
 fixes.
 
@@ -251,8 +251,8 @@ commit):
    **dirty-or-untracked** tree **REFUSES** with an actionable
    error (`commit, stash, or clean untracked files, then re-run /warden`), matching
    warden's detached-HEAD handling. Inside **build**, **build guarantees** the tree is
-   fully clean at warden entry (see the build-side integration requirement in Integration
-   mapping); a dirty **or untracked** tree at build→warden entry is a **surfaced
+   fully clean at warden entry (the build Phase 4 clean-tree rule); a dirty **or
+   untracked** tree at build→warden entry is a **surfaced
    build/test defect** — warden errors, it never sweeps it into the first `chore(warden):`
    commit. **Standalone `/warden` and standalone `/finish` both fall to the
    assert-and-REFUSE rule** — only *build* supplies the clean-tree guarantee (finish has
@@ -496,8 +496,8 @@ user-facing intents overlap ("review before I push" vs "is this ready to ship").
 This is resolved here, not deferred to selection-evals alone: temper's **live**
 description already claims "before merging" (`temper/SKILL.md:3`) — the exact
 push-gate intent warden wants — so the fix also **edits temper's description** to
-cede that phrasing (see the temper frontmatter edit in the Integration mapping) as
-well as constraining warden's. Selection-evals prove point-in-time routing; the
+cede that phrasing (temper's description cedes this — see §Routing boundary; the temper
+edit lands in Phase B/E) as well as constraining warden's. Selection-evals prove point-in-time routing; the
 description edit removes the standing overlap (MEMORY #371/#358: description-phrase
 collisions are fixed by editing the descriptions, not by evals alone).
 
@@ -521,5 +521,269 @@ is *whole-set gate* (warden) vs *single reviewer* (temper / quality-gate / delve
 
 The boundary is asserted by selection-eval prompts in `skills/skill-selection-evals/`.
 
-<!-- SCAFFOLD: later #464 Phase-A tasks author the remaining sections
-(dispatch + return conventions, integration mapping, invariants). -->
+## API Surface
+
+- `/warden [scope] [--effort low|medium|high]` — standalone entry. **warden always runs
+  its fix loops and commits** — it is a gate that **fixes-then-certifies**, not a
+  report-only review — so there is **no `--fix` flag**: temper and the QG red-team leg are
+  inherently fix loops, and `delve --fix` runs automatically on a native-gate trip.
+  **What warden does to your branch:** it may add `chore(warden):` commits
+  (temper/delve/red-team residuals) to the current branch before emitting its verdict.
+  - `scope`: PR id | `base..head` range | path | auto-detect (delve's resolver).
+  - Returns: sectioned-per-reviewer report + `PASS`/`BLOCKED` verdict + RCPT v1 receipt.
+- `Use crucible:warden` (sub-skill) with dispatch context: `PipelineID: <id>`,
+  `Phase: code`, `reviewer-set: <full|standalone>`, `dispatch-dir: <path>`.
+- warden invokes its **internal quality-gate red-team leg** with `Phase: code` and
+  warden's own run-id as `PipelineID` (non-interactive, not build-tagged), and **lets the
+  QG leg re-dispatch its internal siege** (warden does **not** suppress it) — warden's
+  **second** siege pass, mirroring build's Step-6 siege. warden sieges **twice** per run
+  (its own step-1 leg + the QG leg's internal dispatch at `SHA_pre_redteam`), exactly as
+  build does (I-W4 / S-A; the no-suppression note lives in §Calibration-ledger entries).
+- **`reviewer-set` default (fail-safe toward coverage, S3 / I-W9).** warden distinguishes
+  a **sub-skill** invocation from a **standalone** one by the **presence of `Phase` +
+  `PipelineID`** in the dispatch context — the *same* detection mechanism quality-gate uses
+  (`quality-gate/SKILL.md:186`). Given that discrimination: the standalone `/warden` entry
+  (no Phase/PipelineID) defaults to `standalone`; a **sub-skill dispatch (Phase+PipelineID
+  present) that omits `reviewer-set` defaults to `full`** — the higher-coverage set,
+  matching build's intent — so a mis-edited sub-skill call site that drops just the
+  `reviewer-set` parameter cannot silently narrow to conditional inquisitor and lose the
+  Step-4 coverage S3 protects. **M-e scope:** this fail-safe covers omitting `reviewer-set`
+  *while the dispatch context is present*; it does **not** cover a caller that omits the
+  whole Phase+PipelineID context (that caller is detected as standalone and gets the
+  narrower set). The concrete case is **standalone finish** (finish invoked *not* from
+  build), which legitimately has no build Phase/PipelineID and correctly runs the
+  standalone set — a **non-regression** (finish today runs no inquisitor at all), not a
+  coverage loss.
+- Emits the single `gate-verdict-<id>.md` marker (schema-compatible with quality-gate's)
+  carrying the **caller's** `PipelineID` and the aggregate verdict; the internal red-team
+  leg's marker is tagged with warden's own run-id and is not build-tagged (F2 / I-W7).
+  Writes **no** `code` calibration entry to `runs.jsonl` — each leg self-emits its native
+  per-skill entry, mirroring build (I-W8).
+
+## Invariants
+
+**Checkable by inspection:**
+- I-W1: warden never converts one reviewer's severity into another's scale (no cross-scale
+  map in the skill or its scripts). See §Reviewer set.
+- I-W2: the combined report has one section per run reviewer; there is no merged
+  cross-reviewer ranking. See §Reviewer set.
+- I-W3: warden's frontmatter `description` does not contain the trigger phrases owned by
+  temper / quality-gate / delve, **and** temper's description no longer claims the
+  push-gate phrasing ("before merging", "before I push") — that phrasing is warden-owned
+  (routing-collision guard, both directions). See §Routing boundary.
+- I-W4: warden delegates the red-team leg to `crucible:quality-gate` (no independent
+  red-team loop reimplemented in warden), invoked with warden's own run-id as PipelineID
+  and **letting the QG leg re-dispatch its internal siege** (warden does **not** suppress
+  it) — and warden **also** runs siege as its **own** native leg at step-1 HEAD, so siege
+  dispatches **twice per run**, coverage-equal to build's two sieges (S-A). **M-1:** exactly
+  one gate-driver runs the QG leg exactly once (build cedes its code-gate to warden inside
+  build; warden is outermost standalone). See §Calibration-ledger entries for the
+  no-suppression detail.
+- I-W5: build Phase 4 and finish contain exactly one warden call site each; the individual
+  temper/inquisitor/siege/red-team invocations they replaced are gone (no residual
+  double-invocation). *(The call-site cutover lands in Phase E — Tasks 12/16.)*
+- I-W6: ordering — warden **asserts a clean working tree at entry on all paths** and commits
+  **each fixer leg's full residual working-tree changes** (`git add -A && git commit`,
+  non-`fix:` subject) as that leg completes — delve pinned **before** the red-team leg;
+  it re-runs temper scoped to each later fixer's commits, captures
+  `SHA_pre_redteam = HEAD`, runs the red-team leg (letting the QG leg re-dispatch its
+  internal siege), then a **read-only plain-delve freeze-guard** over
+  `SHA_pre_redteam..HEAD` before the freeze — so the frozen HEAD contains every leg's
+  committed fixes (F-A). See §Fix behavior + §Ordering.
+- I-W7: single marker + lifecycle — exactly one `gate-verdict-*.md` carries the caller's
+  (build's) PipelineID and warden is its sole emitter; the red-team leg's marker carries
+  warden's own run-id and never matches the caller's PipelineID filter. The aggregate
+  verdict is stamped after the freeze, bound to the post-commit frozen HEAD. See §Verdict
+  marker ownership.
+- I-W8: legs self-emit; no warden `code` row — warden writes **no** `code` calibration
+  entry to `runs.jsonl`; each leg self-emits its native per-skill entry, mirroring build.
+  The attribution change from build is one of **degree, not kind (M-5)** — no
+  `reconcile_ledger.py` edit and no leg-SKILL.md edit required. See §Calibration-ledger
+  entries.
+- I-W9: reviewer-set fail-safe default — sub-skill vs standalone is detected by
+  Phase+PipelineID presence. A sub-skill dispatch (context present) that omits
+  `reviewer-set` defaults to `full` (coverage-preserving); the standalone `/warden` entry
+  defaults to `standalone`. No caller silently narrows inquisitor coverage by omitting the
+  `reviewer-set` parameter while context is present (S3); the whole-context-omitted case
+  (standalone finish) is a non-regression (M-e). See §API Surface.
+
+**Requires tests:**
+- T-W1: a diff that trips exactly one native gate (e.g. red-team Significant, everything
+  else clean) yields `BLOCKED`.
+- T-W2: siege runs on a security-surface diff and is skipped on a non-security diff
+  (conditional trigger).
+- T-W3: in the **standalone** reviewer-set, inquisitor runs on a multi-file diff (`>1
+  changed file OR >1 top-level module`) and is skipped on a single-file diff.
+- T-W4: the **double-temper** (build Phase-4 temper + finish Step-2 temper) is killed —
+  finish no longer re-runs temper after Phase 4. (warden still invokes temper several times
+  *internally* — step-1 temper and the scoped re-temper after each later fixer; the step-4
+  terminating leg is plain delve, not temper. The invariant is the killed
+  cross-orchestrator duplication, not a literal single temper run.)
+- T-W5: warden emits exactly one build-`PipelineID`-tagged verdict marker (the aggregate
+  verdict) that build's Verdict Marker Verification accepts, and the red-team leg's marker
+  (tagged with warden's run-id) is NOT surfaced by build's PipelineID filter (F2 / I-W7).
+- T-W6: a clean diff (no native gate trips) yields `PASS`.
+- T-W7: selection-eval — `/warden`-style prompts route to warden, not temper/quality-gate/
+  delve, and vice-versa — including the "review my changes before I push" collision case →
+  warden (M2).
+- T-W8: in the **`full`** reviewer-set, inquisitor runs even on a single-file diff
+  (unconditional — no regression of build Phase 4 Step 4 coverage; S3).
+- T-W9: ordering — a later fixer leg's commits trigger a scoped re-temper before the
+  red-team leg; **warden commits each fixer leg's residual** (temper/delve/red-team, all
+  non-`fix:` `chore(warden):` subjects) so the frozen HEAD contains them; the red-team leg
+  runs before the terminating read-only pass over `SHA_pre_redteam..HEAD` (which is **empty
+  and benignly passes when the red-team leg is clean**); and a red-team fix that introduces
+  an instance bug into the frozen HEAD is caught by the read-only plain-delve re-check
+  (report-only, run exactly once, no fix loop, no inquisitor, BLOCK-on-trip) and yields
+  BLOCKED before PASS (I-W6 / S-D).
+- T-W10: *retired.* Under Option C warden emits **no** aggregate `code` calibration entry
+  (each leg self-emits its native entry to `runs.jsonl`; I-W8), so there is no
+  aggregate-emit behavior to assert. The number is left retired rather than renumbered so
+  the surrounding Txx references stay stable.
+- T-W11: delve leg — an unambiguous kept finding is fixed via `delve --fix` (committed by
+  warden with a non-`fix:` `chore(warden): delve fixes <run-id>` subject) and delve re-runs
+  until the predicate clears; a **surfaced-not-applied** finding, and a predicate that still
+  trips after the **≤2-re-run cap**, both BLOCK with a named user hand-off (delve has no
+  loop; S5).
+- T-W12: build recovery — a missing/mismatched **warden** verdict marker after a just-run
+  gate triggers build to re-invoke **warden** (the full reviewer set), not bare
+  `quality-gate` (red-team only), so the recovery path cannot silently downgrade coverage
+  (S-B / I-W7). *(The recovery-site repoint lands in Phase E.)*
+- T-W13: **siege dispatches twice per warden run** on a security-surface diff — warden's
+  own step-1 siege leg **and** the quality-gate red-team leg's internal re-dispatch at
+  `SHA_pre_redteam`. Assert warden's QG-leg invocation passes **no** siege-suppression flag,
+  so the two-siege mirror of build holds (S-A / I-W4; see §Calibration-ledger entries).
+- T-W14: **temper-only fixer → frozen HEAD contains temper's fix (F-A regression).** A diff
+  where temper is the sole fixer (temper fixes a Critical **by editing an existing line
+  and/or creating a new file**; inquisitor all-PASS; siege clean/skipped; delve clean;
+  red-team clean) — warden **commits temper's residual** (via `git add -A && git commit` so
+  a **newly-created (untracked) file** is staged too) before the freeze, so the frozen HEAD
+  (and the verdict/marker bound to it) **contains temper's fix — including any new file it
+  created** (the S1 untracked-drop case); the gate never certifies a SHA that omits the fix
+  that earned the PASS (F-A / I-W6 / S1).
+
+## Testing strategy
+
+- **Skill behavior evals** (`skills/warden/evals/`): reviewer-set selection by diff shape,
+  disjunctive gate outcomes (per-native-gate trip → BLOCKED), clean-pass, verdict-marker
+  emission. Mirror the delve/siege eval-harness pattern (deterministic scorer, CI-gated)
+  where the gate logic is mechanical.
+- **Selection-evals** (`skills/skill-selection-evals/`): warden-vs-{temper, quality-gate,
+  delve} routing boundary.
+- **Integration**: build Phase 4 + finish mock-dispatch fixtures updated to assert a single
+  warden call site and the killed double-temper.
+- Add the new suites to `scripts/run_tests.sh` (single source of truth).
+
+## Failure modes / edge cases
+
+- **Empty / binary-only diff**: warden reports "no changes to review" and returns PASS
+  (delve's existing empty-diff handling).
+- **A reviewer sub-dispatch dies**: warden surfaces the failed leg and returns `BLOCKED`
+  (fail-closed — an unrun gate is not a pass), never silently drops it. A
+  **condition-skipped** leg (siege on a non-security diff, standalone-inquisitor on a
+  single-file diff) is **not** an "unrun gate" for this rule — only a leg that was
+  *supposed to run* and died triggers the fail-closed BLOCK; a correctly skipped conditional
+  leg is a normal PASS input, not a failure (M5).
+- **quality-gate stagnation/escalation on the red-team leg**: warden propagates the
+  escalation exactly as build Phase 4 does today; it does not swallow it.
+- **Standalone warden on a detached HEAD**: require an explicit scope (delve's rule).
+- **Standalone warden on a dirty-or-untracked working tree**: **REFUSE** with an actionable
+  error ("commit, stash, or clean untracked files, then re-run `/warden`") — the fully-empty
+  (`git status --porcelain`, tracked **and** untracked) clean-tree precondition is asserted,
+  not papered over (Ordering step 0 / I-W6). No auto-save/restore machinery: warden pushes
+  the precondition back to the user, exactly as it does for a detached HEAD.
+- **Standalone finish (not from build) through warden (M3)**: finish today uses
+  `crucible:red-team` directly because at finish time there is "no typed artifact." Routed
+  through warden, the red-team leg is always `crucible:quality-gate` on artifact `code`,
+  invoked with **warden's own run-id** as PipelineID — so it runs non-interactively (no
+  between-rounds check-ins) in the standalone-finish path as well as inside build. warden's
+  aggregate marker in a standalone finish carries no build PipelineID (there is no build),
+  matching quality-gate's standalone-completion-record behavior. **Behavior change
+  (disclosed, deliberate):** standalone finish is detected as `standalone` (no build
+  clean-tree guarantee — finish has none of its own), so it inherits warden's
+  assert-and-REFUSE precondition — `/finish` now **hard-REFUSES** a dirty-or-untracked tree
+  at the review step, where it worked on a dirty tree before. An accepted change: the
+  per-leg-commit attribution base requires a fully-clean tree.
+
+## Migration & rollback (S4)
+
+The maintainer chose one combined change (warden replaces build Phase 4 Steps 3–6 and
+finish Steps 2–3). To keep that intent while giving a concrete regression escape for the
+repo's two most load-bearing orchestrators, land it in two commits with a documented
+revert:
+
+1. **Land warden as a callable skill first**, with build Phase 4 and finish still wired to
+   their **current** paths (no call-site change yet). warden's own evals + selection-evals
+   must be green in `run_tests.sh` at this point.
+2. **Cut the two call-sites over** to `Use crucible:warden` in a single commit, behind a
+   documented **single-commit `git revert`** as the regression escape: the cutover is one
+   combined change, so reverting that one commit restores the old Phase-4 Steps 3–6 +
+   finish Steps 2–3 dispatch paths in one step. (No `CRUCIBLE_WARDEN=off` env shim — it
+   would force build/finish SKILL.md to carry both the old steps and the warden call behind
+   an env branch in prose, doubling the maintained surface for no gain over the revert; M6.)
+   The old-path code is not deleted in this commit.
+3. **Acceptance signal to remove the old steps** (a later commit): warden evals +
+   selection-evals + the build/finish integration fixtures green in CI, **and** one real
+   build driven end-to-end through warden (a live Phase-4 run producing the correct single
+   build-tagged marker and killed double-temper, with each leg self-emitting its native
+   calibration entry and warden emitting none). Only after that signal are the old
+   Phase-4/finish steps and the shim removed.
+
+This bounds the blast radius: if warden regresses build in live use, the revert restores the
+pre-warden behavior in one step, because the old orchestration code still exists until the
+acceptance signal fires.
+
+**M-f caveats.** (1) *The one-commit revert is time-boxed.* The single-commit `git revert`
+restores the old paths only in the **window between the cutover commit (step 2) and the
+old-step-removal commit (step 3)**. After step 3 deletes the old Phase-4/finish steps, a
+regression needs a **two-commit revert** (un-cutover + restore the deleted steps), or a
+fresh re-add. (2) *no reconcile or leg coupling.* Under Option C warden emits **nothing**
+to `runs.jsonl`, so there is genuinely **no** `reconcile_ledger.py` edit **and no
+leg-SKILL.md edit** — warden simply does not emit; the legs self-emit their native entries
+exactly as under build. This is not warden "solving" a double-entry: warden **avoids adding
+a further** co-timed `code` entry by not emitting.
+
+## Acceptance criteria
+
+- `skills/warden/SKILL.md` with non-colliding frontmatter; canonical dispatch + return
+  conventions linked, not copied; severity language cites `severity-verdict-contract.md` /
+  `severity-rubric.md`.
+- Disjunctive native-gate logic + per-reviewer sectioned report + conditional siege +
+  reviewer-set-split inquisitor (unconditional in `full`, conditional in `standalone`) +
+  warden-owned delve fix path, all per the reviewer table.
+- Ordering (I-W6): clean-working-tree precondition **asserted on all paths** (`git status
+  --porcelain` **fully empty** — standalone `/warden` **and standalone `/finish`**
+  dirty-or-untracked trees **REFUSED**; only **build** guarantees a fully-clean tree at
+  entry; no working-tree save/restore machinery); non-terminal fixers first (delve pinned
+  **before** the red-team leg) with **warden committing each leg's full residual as it
+  completes** (`git add -A && git commit`, non-`fix:` `chore(warden):` subjects;
+  inquisitor/siege self-commit → no-op); scoped re-temper after later fixers; red-team leg
+  next after capturing `SHA_pre_redteam`, warden commits its residual, then a read-only
+  re-check of `SHA_pre_redteam..HEAD` (empty and benignly passing when the red-team leg is
+  clean) by **plain delve in its native report-only mode only** (BLOCK-on-trip, run exactly
+  once, no fix loop, no inquisitor — S-D) as the terminating leg before HEAD is frozen. The
+  frozen HEAD therefore contains **every leg's committed fixes**, so the verdict/marker
+  binds a SHA that contains the fixes that earned it (F-A).
+- Single build-tagged verdict marker owned by warden (I-W7). warden writes **no** `code`
+  calibration entry to `runs.jsonl`; each leg self-emits its native per-skill entry
+  (temper/siege Tier-A, quality-gate, delve/inquisitor Tier-B stub), mirroring build — with
+  **no `reconcile_ledger.py` edit and no leg-SKILL.md edit** (I-W8).
+- build Phase 4 + finish refactored to single warden call sites; the replaced reviewer
+  invocations are gone; double-temper gone. The two surviving build `quality-gate` call
+  sites — the **Step-6 gate invocation** and the **recovery re-invoke on a
+  missing/mismatched marker** — are **repointed to warden** so no path (normal or recovery)
+  runs a narrower gate (S-B). *(These build/finish edits land in Phase E — Tasks 12/16;
+  this task authors warden's SKILL.md only.)*
+- **temper frontmatter description edited** to cede the push-gate phrasing ("before
+  merging" / "before I push") to warden while keeping its single-reviewer triggers ("is this
+  ready to ship", "review my changes", "review this PR", "code review", "check the diff") —
+  the routing-collision fix (S-C / I-W3). *(Phase B/E.)*
+- **finish refactor (M-3):** finish Steps 2+3 replaced by a single warden call, and build's
+  finish-skip instruction rewritten to tell finish to skip the **warden call** **with the
+  test-coverage (Step 2.5) skip preserved**. *(Phase E.)*
+- **siege runs twice per warden run, mirroring build (S-A):** warden owns a siege leg at
+  step-1 HEAD **and** lets the quality-gate red-team leg re-dispatch its internal siege at
+  `SHA_pre_redteam` (warden does **not** suppress it) — coverage-equal to build's two
+  sieges; T-W13 asserts it.
+- Behavior evals + selection-evals green in `run_tests.sh`; catalog regenerated
+  (`scripts/catalog.py`), skill count updated.
