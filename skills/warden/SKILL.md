@@ -489,5 +489,37 @@ pass; whenever warden actually did work, build's finish-skip is the only guard t
 prevents a re-run. This is acceptable (a double-run is wasteful, not incorrect), but
 the marker must not be relied on as the de-dup mechanism after a fixing run.
 
+## Routing boundary (warden vs temper / quality-gate / delve)
+
+warden's hardest routing problem is that it **runs temper as a leg**, so the
+user-facing intents overlap ("review before I push" vs "is this ready to ship").
+This is resolved here, not deferred to selection-evals alone: temper's **live**
+description already claims "before merging" (`temper/SKILL.md:3`) — the exact
+push-gate intent warden wants — so the fix also **edits temper's description** to
+cede that phrasing (see the temper frontmatter edit in the Integration mapping) as
+well as constraining warden's. Selection-evals prove point-in-time routing; the
+description edit removes the standing overlap (MEMORY #371/#358: description-phrase
+collisions are fixed by editing the descriptions, not by evals alone).
+
+The discriminator is **whole-set gate** (warden) vs **single reviewer**
+(temper / quality-gate / delve).
+
+**Phrase-ownership split:**
+
+| Phrase / intent | Owner | Why |
+|---|---|---|
+| "gate this before I push", "run the full review gate", "run all the reviewers", "warden", "review my changes **before I push**" / "**before pushing**" / "**before merging**" | **warden** | wants the whole reviewer set + one verdict; the "before I push" / "before pushing" / "before merging" push-gate fragment is warden-owned even when attached to "review my changes" (M2 / S-C — "before merging" ceded from temper's live description) |
+| "is this ready to ship", "review my changes" (bare), "review this PR", "code review", "check the diff" | **temper** (kept) | single fresh-eyes merge-verdict review; temper's existing description keeps these — but a trailing "before I push" / "before pushing" / "before merging" hands the utterance to warden (M2 / S-C) |
+| "red-team this", "quality gate this design/plan", "is this design sound" | **quality-gate** | red-team of a typed artifact, not a code push gate |
+| "find bugs in this diff", "scan this for defects", "instance-bug sweep" | **delve** | report-only bug finder, not a gate |
+
+warden deliberately does **not** claim temper's "is this ready to ship" / "review
+my changes" phrases (I-W3): a fresh-eyes single-reviewer pass stays with temper,
+red-teaming a typed design/plan stays with quality-gate, and a report-only bug-hunt
+on a diff stays with delve. warden owns only the *whole-set gate* — the discriminator
+is *whole-set gate* (warden) vs *single reviewer* (temper / quality-gate / delve).
+
+The boundary is asserted by selection-eval prompts in `skills/skill-selection-evals/`.
+
 <!-- SCAFFOLD: later #464 Phase-A tasks author the remaining sections
-(routing boundary, dispatch + return conventions, integration mapping, invariants). -->
+(dispatch + return conventions, integration mapping, invariants). -->

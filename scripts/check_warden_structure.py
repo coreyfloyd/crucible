@@ -37,6 +37,14 @@ surface, SKILL.md PLUS `scripts/check_warden_*.py`, excluding `skills/warden/eva
 by construction — while a descriptive `runs.jsonl`/emit prose token does NOT trip)
 and the T-W13 siege-suppression guard (`skip_siege:`/`force_siege:`/`--skip-siege`
 in param/flag form, not a bare substring).
+Task 7 adds the Routing-boundary (S7) clauses — the phrase-ownership table header
+and the "warden does **not** claim temper's phrases" statement (I-W3) — plus the
+I-W3 DESCRIPTION-scoped negative: warden's frontmatter `description` must NOT
+contain temper/quality-gate/delve owned trigger phrases ("is this ready to ship",
+"red-team this", "find bugs in this diff", "instance-bug sweep"). That negative is
+scoped to the `description:` value ONLY — those phrases legitimately appear in the
+SKILL.md BODY (the phrase-ownership table lists them as other skills' triggers), so
+a whole-file grep would false-trip; `_extract_description` isolates the value.
 Stdlib only, no argparse.
 
 Style mirrors `scripts/check_canonical_drift.py`: ROOT-from-`__file__`, error
@@ -48,7 +56,8 @@ warden's SKILL.md to `REQUIRED_SUBSTRINGS` (label -> literal substring), or to
 The frontmatter `name:`/`description:` guards live in `check_frontmatter()`; the
 I-W1 normalization guard lives in `check_forbidden()`; the fix-path command
 negatives (R11 `git commit -a`, R12 `git stash`, R13 `temper-reviewer`
-reference-form) live in `check_negatives()`. The
+reference-form) live in `check_negatives()`; the I-W3 owned-phrase negative
+(description-scoped) lives in `check_description_negatives()`. The
 `--selftest` GOOD/BAD samples are self-contained and must stay in sync — the
 per-clause RED cases are generated automatically from `REQUIRED_SUBSTRINGS` and
 `REQUIRED_ANY`, so a new required clause gets its own RED case for free; add a
@@ -107,7 +116,21 @@ REQUIRED_SUBSTRINGS: dict[str, str] = {
     "I-W8 no-calibration-emit clause": "no calibration",
     "M-5 degree-not-kind attribution disclosure": "degree, not kind",
     "double-run pre-run-base marker (M4)": "pre-run base",
+    # Task 7 — Routing boundary (S7) + phrase-ownership / I-W3, design L638-671.
+    "phrase-ownership table header (S7)": "| Phrase / intent | Owner | Why |",
+    "warden does NOT claim temper's phrases (I-W3)": "does **not** claim temper's",
 }
+
+# I-W3 — the owned trigger phrases warden's `description` must NOT carry. Each
+# belongs to a single-reviewer skill (the discriminator is whole-set gate vs
+# single reviewer); listing them in warden's description would recreate the exact
+# routing collision the phrase-ownership table exists to prevent.
+_OWNED_TRIGGER_PHRASES: tuple[str, ...] = (
+    "is this ready to ship",   # temper (single fresh-eyes merge-verdict)
+    "red-team this",           # quality-gate (red-team of a typed artifact)
+    "find bugs in this diff",  # delve (report-only bug finder)
+    "instance-bug sweep",      # delve
+)
 
 # label -> alternatives; at least ONE must appear (an OR clause). The dispatch
 # frames these as disjunctions, so requiring both alternatives would be stricter
@@ -210,6 +233,47 @@ def check_frontmatter(text: str) -> list[str]:
     return errs
 
 
+def _extract_description(text: str) -> str:
+    """Return the frontmatter `description:` value (lowercased), or '' if there
+    is no frontmatter/description. warden's `description` is the last key in the
+    block, so everything from after `description:` to the closing `---` fence is
+    the value — this isolates it from the SKILL.md body, which legitimately
+    contains the owned phrases in the phrase-ownership table."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ""
+    fm_end = None
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            fm_end = i
+            break
+    if fm_end is None:
+        return ""
+    fm = "\n".join(lines[1:fm_end])
+    idx = fm.find("description:")
+    if idx == -1:
+        return ""
+    return fm[idx + len("description:"):].lower()
+
+
+def check_description_negatives(text: str) -> list[str]:
+    """I-W3: warden's frontmatter `description` must NOT contain a temper/
+    quality-gate/delve owned trigger phrase — the routing discriminator is
+    whole-set gate (warden) vs single reviewer (temper/quality-gate/delve).
+    Scoped to the `description:` value ONLY (via `_extract_description`): the
+    same phrases appear in the SKILL.md BODY (the phrase-ownership table names
+    them as the other skills' triggers), so a whole-file grep would false-trip."""
+    desc = _extract_description(text)
+    errs: list[str] = []
+    for phrase in _OWNED_TRIGGER_PHRASES:
+        if phrase in desc:
+            errs.append(f"forbidden owned trigger phrase in warden description "
+                        f"(I-W3): {phrase!r} — that intent belongs to a single "
+                        "reviewer (temper/quality-gate/delve), not warden's "
+                        "whole-set gate")
+    return errs
+
+
 def check_forbidden(text: str) -> list[str]:
     """I-W1: warden must carry NO cross-scale normalization construct. Returns
     an error if a 'convert <X> to <Y> scale' mapping is present; negation prose
@@ -289,6 +353,7 @@ def check_text(text: str) -> list[str]:
             errs.append(f"missing {label}: none of {list(alts)} present")
     errs.extend(check_forbidden(text))
     errs.extend(check_negatives(text))
+    errs.extend(check_description_negatives(text))
     return errs
 
 
@@ -376,6 +441,19 @@ and halts the pipeline. A reviewer sub-dispatch that dies is fail-closed too —
 warden surfaces the failed leg and returns `BLOCKED` (an unrun gate is not a pass),
 never silently drops it. A correctly condition-skipped leg is a
 normal PASS input, not a failure (M5).
+
+## Routing boundary
+
+The discriminator is whole-set gate (warden) vs single reviewer.
+
+| Phrase / intent | Owner | Why |
+|---|---|---|
+| "gate this before I push", "warden" | warden | whole reviewer set + one verdict |
+| "is this ready to ship", "review my changes" (bare) | temper | single fresh-eyes merge-verdict |
+| "red-team this" | quality-gate | red-team of a typed artifact |
+| "find bugs in this diff", "instance-bug sweep" | delve | report-only bug finder |
+
+warden deliberately does **not** claim temper's "is this ready to ship" phrases (I-W3).
 """
 
 # The negation prose above must NOT trip the I-W1 guard; a real
@@ -473,6 +551,16 @@ _SKIP_SIEGE_PROSE_SAMPLE = (
     "warden deliberately does NOT pass `skip_siege` or `force_siege` to the QG "
     "red-team leg — it never suppresses the second siege.\n")
 
+# ---- Task 7 I-W3 description-negative sample --------------------------------
+# An owned trigger phrase in the frontmatter `description` FAILS (I-W3): warden
+# must not claim a single-reviewer intent. The allow-case is the GOOD sample
+# itself — its BODY carries all four owned phrases in the phrase-ownership table,
+# yet passes, proving the negative is scoped to the `description:` value only.
+_DESC_OWNED_PHRASE_SAMPLE = _GOOD_SAMPLE.replace(
+    "description: Consolidated pre-push review gate — temper, delve, red-team, "
+    "siege, inquisitor.",
+    "description: Full gate — use when you want to know is this ready to ship.")
+
 
 def selftest() -> int:
     # 1. GOOD sample passes every assertion.
@@ -568,6 +656,17 @@ def selftest() -> int:
     sp_errs = check_negatives(_SKIP_SIEGE_PROSE_SAMPLE)
     assert all("T-W13" not in e for e in sp_errs), (
         f"descriptive `skip_siege` prose must NOT trip T-W13, got: {sp_errs}")
+
+    # 11. Task-7 I-W3 description-negative — an owned phrase in the `description`
+    #     FAILS; the allow-case is the GOOD sample (owned phrases in its BODY
+    #     table pass, proving the negative is description-scoped, not whole-file).
+    dn_errs = check_description_negatives(_DESC_OWNED_PHRASE_SAMPLE)
+    assert any("I-W3" in e for e in dn_errs), (
+        f"an owned phrase in the `description` should trip I-W3, got: {dn_errs}")
+    assert check_description_negatives(_GOOD_SAMPLE) == [], (
+        "owned phrases in the BODY (phrase-ownership table) must NOT trip the "
+        "description-scoped I-W3 negative, got: "
+        f"{check_description_negatives(_GOOD_SAMPLE)}")
     # (The emission-surface scan over the shipped scripts is a filesystem check,
     # so it stays in `main()` — not here — keeping `--selftest` purely in-memory.)
 
@@ -581,7 +680,10 @@ def selftest() -> int:
           "does NOT trip; an imperative emit-call FAILS) and its emission-surface "
           "scan over check_warden_*.py, the T-W13 siege-suppression negative "
           "(`skip_siege: true` param FAILS; descriptive `skip_siege` prose does "
-          "NOT trip), and the frontmatter guard each have an exercised path.")
+          "NOT trip), the Task-7 I-W3 description-scoped owned-phrase negative "
+          "(an owned phrase in the `description` FAILS; the same phrases in the "
+          "BODY phrase-ownership table do NOT trip), and the frontmatter guard "
+          "each have an exercised path.")
     return 0
 
 
