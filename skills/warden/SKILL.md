@@ -53,5 +53,159 @@ regression), **conditional (multi-file / cross-module) in `standalone`** where
 the per-push Opus fan-out cost is the dominant concern. T-W8 asserts the `full`
 behavior.
 
-<!-- SCAFFOLD: later #464 Phase-A tasks author the full sections
-(dispatch/return wiring, fix behavior, double-run avoidance, integration). -->
+## Fix behavior
+
+Each leg's fix path is **not** uniform — the earlier "warden drives each
+reviewer's existing fix loop" framing was wrong for delve, which has no loop.
+And an earlier premise — "each fixer leg commits its own working-tree delta" — is
+**false for temper**: temper's fixer **edits the working tree** (its Step 3 fixes
+every member of `T`, `temper/SKILL.md:188`) but in **uncommitted mode**
+(`temper/SKILL.md:197-198`) **never advances HEAD**. The `git stash create` temper
+uses in that mode only snapshots the tree to compute each round's fix-delta scope —
+*that snapshot* is what leaves HEAD, the index, and the working tree untouched; it is
+**not** how the fix is applied. So temper's edits sit in the working tree,
+**uncommitted**, for warden to commit. delve `--fix` and the
+quality-gate red-team leg likewise edit the working tree and never commit; only
+inquisitor (`inquisitor/SKILL.md:163`) and siege self-commit. So warden cannot assume
+"the leg committed its own fix" — it must commit each leg's residual itself, or the
+frozen HEAD can omit temper's (or delve's, or the red-team leg's) fixes.
+
+**Universal per-leg residual commit (I-W6).** After **each** fixer leg terminates —
+and **before the next fixer leg runs** — warden commits **that leg's residual
+working-tree changes, if any**. Under the clean-working-tree precondition (below), a
+leg's residual **is** the entire set of uncommitted changes — tracked edits **and
+newly-created (untracked) files alike** — so warden commits **all** of it with
+`git add -A && git commit` (which stages new files too, so a fixer leg that creates a
+new module/test lands it in the frozen HEAD) and a
+leg-labeled **non-`fix:`** subject (`chore(warden): temper fixes <run-id>`,
+`chore(warden): delve fixes <run-id>`, `chore(warden): red-team fixes <run-id>`, etc. —
+see M-c). Committing the full residual (rather than path-scoping it) captures delve's
+out-of-scope `--fix` edits **by construction** — the clean-tree base guarantees the only
+uncommitted changes (tracked **or** untracked) are the current leg's delta, so there is
+nothing unrelated to sweep. A leg that already self-committed (inquisitor, siege) leaves **no residual**, so
+the commit is a no-op for it; temper, delve, and the red-team leg — which never commit —
+get their edits committed here. This is a **single universal rule**, not a per-leg
+special case, and it corrects the false "each fixer leg commits its own delta" premise
+to: *warden commits each leg's residual; self-committing legs leave none;
+temper/delve/red-team leave working-tree edits that warden commits.* HEAD advances as
+each leg completes, so downstream `finish` / PR-creation see every leg's fixes **already
+committed**, and — because each residual is committed once, between legs — there is **no
+double-commit**.
+
+**Working-tree-clean precondition (the inductive base — ASSERTED on all paths).** For
+"commit this leg's residual" to capture only that leg's delta (never unrelated edits),
+warden requires a **clean working tree at entry**, and **asserts** it on **every** path:
+`git status --porcelain` must be **fully empty** — **no** tracked modifications **and no
+untracked files**. This is a hard precondition, not an assumption; the fully-empty check
+(rather than "empty for tracked files") is what makes `git add -A && git commit` safe —
+the only thing it can stage after a leg is exactly that leg's delta, so per-leg
+attribution holds by construction (a pre-existing entry-untracked file could otherwise be
+swept into the first leg's `chore(warden):` commit). A standalone `/warden` on a
+**dirty-or-untracked** tree **REFUSES** with an
+actionable error (`commit, stash, or clean untracked files, then re-run /warden`) —
+matching how warden already treats a detached HEAD (require explicit action from the
+user). Inside **build**, build **guarantees** a fully-clean tree at warden entry (see the
+build-side integration requirement in Integration mapping): a dirty **or untracked** tree
+at build→warden entry is a **surfaced build/test defect** (warden errors) — it is never
+silently swept into the first `chore(warden):` commit. **Standalone `/warden` and
+standalone `/finish` both fall to the assert-and-REFUSE rule** (only *build* supplies a
+clean-tree guarantee — finish has no clean-tree gate of its own; see the finish
+integration note). Without this asserted base the per-leg residual is not well-defined; it
+is the base of the induction that makes the frozen HEAD provably contain every leg's
+fixes.
+
+Per leg:
+
+- **temper** — loops+fixes to merge-verdict termination (its own loop), in
+  **uncommitted mode** (`temper/SKILL.md:198`, HEAD untouched), so
+  **warden commits temper's residual working-tree changes** itself
+  (`chore(warden): temper fixes <run-id>`, non-`fix:` per M-c) per the universal rule
+  above.
+- **quality-gate (red-team leg)** — loops+fixes its red-team rounds (its own
+  loop). quality-gate's `code` fixes are **working-tree edits, never committed**: the
+  fix agent's capabilities are `apply-edits` + `run-tests` with no git step
+  (`quality-gate/SKILL.md:75`), those edits run against the working tree, the pre-qg-fix
+  **checkpoint snapshots the working directory as rollback** (`:460` — which only makes
+  sense because code fixes mutate that tree), and there is no `git commit` anywhere in
+  quality-gate's directory. The leg is invoked so its internal
+  siege auto-dispatch runs (warden does **not** suppress it) — warden's second siege
+  pass, mirroring build (see the reviewer table / I-W4). So — like temper and delve —
+  **warden commits the red-team leg's residual working-tree changes itself** after the loop
+  terminates, with a **non-`fix:` subject** (`chore(warden): red-team fixes <run-id>` —
+  see M-c). As the **terminal** fixer this commit is made at Ordering step 3; its range
+  `SHA_pre_redteam..HEAD` is what the terminating freeze-guard re-checks (Ordering step
+  3→4). HEAD advances so downstream `finish` / PR-creation see the red-team fixes
+  **already committed**.
+- **siege** — loops+fixes to 0 Critical/High (its own loop); **self-commits**, so it
+  leaves no residual (the universal commit is a no-op for it).
+- **inquisitor** — writes+runs tests and manages its own fix cycle; **self-commits**
+  (`inquisitor/SKILL.md:163`), so it leaves no residual.
+- **delve** — **report-only, no fix loop** (`delve/SKILL.md:25,125`; runs the
+  engine once and reports). warden owns delve's convergence with a **bounded**
+  path. On a delve native-gate trip (`{CONFIRMED,PLAUSIBLE} × {Critical,Important}`),
+  warden runs `delve --fix`, which applies the unambiguous repairs and **surfaces
+  rather than applies** the findings whose repair is ambiguous (`delve/SKILL.md:133`
+  — the discriminator is a judgment delve's `--fix` step makes, not a schema field
+  on the report). delve `--fix` edits the **working tree only and never commits**
+  (`delve/SKILL.md:130`), so **warden commits the applied fixes itself** with a
+  **non-`fix:` subject** (`chore(warden): delve fixes <run-id>` — see M-c) before
+  re-running plain delve to re-check the
+  predicate — this is what gives the delve leg fix commits for the scoped
+  re-temper (I-W6) and lands them in the frozen HEAD (S-4). The
+  **surfaced-not-applied** findings are the BLOCK set: warden does not auto-fix
+  them and **BLOCKs with a named user hand-off**, since the repair is ambiguous
+  and there is no safe auto-repair. The re-run loop is **capped at ≤2 re-runs**
+  (delve's finder fan-out is non-deterministic, so a one-shot `--fix` need not
+  clear a `PLAUSIBLE@Critical`); if the native predicate still trips after the
+  cap, warden **BLOCKs with the same named user hand-off** rather than looping
+  open-endedly. This gives delve a defined, bounded convergence path instead of a
+  leg that can block forever.
+
+**M-c note (`fix:` subject vs reconcile's candidate walk — resolved).**
+calibration-reconcile walks merged `fix`/`hotfix` commits as falsification
+candidates, so a `fix:`-prefixed intra-gate commit that reached a **merged branch
+un-squashed** could be picked up as a candidate falsifying a *prior* verdict over
+the same files. To make correctness independent of the downstream repo's merge
+strategy, **every warden-owned per-leg residual commit — temper, delve, the red-team
+leg, and any other leg whose residual warden commits — must use a non-`fix:` subject**
+(`chore(warden): temper fixes <run-id>`, `chore(warden): delve fixes <run-id>`,
+`chore(warden): red-team fixes <run-id>`) — **mandated, not optional**. Each is a
+warden-authored commit of a leg's working-tree changes, and any could otherwise hit the
+identical `fix`/`hotfix` candidate-walk collision. A non-`fix:` subject is never a
+candidate in reconcile's `fix`/`hotfix` walk regardless of whether the branch is
+squashed, so the subject-prefix collision cannot arise for any warden-owned commit even
+in a rebase/merge-commit repo.
+
+**M-2 caveat (`chore()` also suppresses *legitimate* prior-gate falsifications).** The
+non-`fix:` subject is blanket: because `delve --fix` may repair pre-existing
+out-of-scope files (M-d), a `chore(warden):` commit that genuinely fixes a bug a
+**prior merged gate** missed never enters reconcile's `fix`/`hotfix` candidate walk
+(`reconcile_ledger.py:910,914`), so that prior verdict keeps an undeserved Brier point.
+This is a small calibration-precision loss, disclosed here; the reconcile tier-filter
+fix that would recover it stays out of scope.
+
+**M-d note (delve `--fix` may touch out-of-scope files).** `delve --fix` may edit
+**any file a kept finding names**, including files outside the original push scope
+(delve's cross-file angle, `delve/SKILL.md:137`). warden commits those **by
+construction** — the unscoped per-leg residual commit (above) captures every
+uncommitted tracked change, so delve's out-of-scope edits are committed like any other,
+not as a special case. The scoped re-temper (Ordering step 2) covers them on temper's
+axis, and — because delve is pinned **before** the red-team leg (Ordering step 1) —
+the **second siege** (the QG leg's internal auto-dispatch at `SHA_pre_redteam`) re-sieges
+over those edits on the security axis. So only **inquisitor does not re-run** on
+newly-touched out-of-scope files (it binds its step-1 HEAD, per S-D / S-E). This is a
+small accepted coverage asymmetry: temper/delve/siege cover the widened scope; only the
+inquisitor leg does not. **M-4 (pushed-footprint expansion):** beyond the *review*
+asymmetry, warden **commits and pushes** these out-of-scope `delve --fix` edits — a
+scope-expansion of what *ships*, not just of what is reviewed (a user gating a 1-file
+change may push edits to unrelated files delve's cross-file angle touched). Disclosed and
+accepted.
+
+warden blocks **only if a native gate still trips after that leg's fix path (its
+own loop, or warden-owned delve/red-team fixes) terminates**. warden adds no new
+fix mechanism beyond running `delve --fix` and committing **each leg's residual
+working-tree changes** (temper, delve, and the red-team leg — inquisitor/siege
+self-commit and leave no residual), as described above.
+
+<!-- SCAFFOLD: later #464 Phase-A tasks author the remaining sections
+(ordering, gate/enforcement, double-run avoidance, integration, invariants). -->
