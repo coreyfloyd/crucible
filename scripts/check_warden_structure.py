@@ -16,12 +16,19 @@ Fix-behavior section's clauses: the per-leg residual commit primitive
 (`git add -A && git commit`), the fully-empty clean-tree precondition
 (`git status --porcelain` + "fully empty"/"no untracked"), the non-`fix:` subject
 mandate (`chore(warden):` + a non-fix note), and the dirty-tree REFUSE clause
-(`commit, stash, or clean untracked files`). Also asserts the ABSENCE of two
-cross-scale + fix-path footguns: a cross-scale normalization construct (I-W1),
-`git commit -a` (R11), and `git stash` in COMMAND form (R12) — the latter matched
-as the command (`git stash`, mutating forms), NOT the bare word "stash" (warden's
-own REFUSE clause contains "stash") and NOT the read-only `git stash create`
-temper snapshot the design describes. Exits 0 when every clause is present and no
+(`commit, stash, or clean untracked files`) — and, as of Task 4, the Ordering
+(F1) / read-only freeze-guard clauses: the `SHA_pre_redteam` capture, the
+terminating leg's `native report-only mode`, its `does not pass `--fix`` clause,
+the delve-pinned-before-the-red-team-leg ordering, and the empty-range
+benign-pass clause. Also asserts the ABSENCE of several cross-scale + fix-path
+footguns: a cross-scale normalization construct (I-W1), `git commit -a` (R11),
+`git stash` in COMMAND form (R12) — matched as the command (`git stash`, mutating
+forms), NOT the bare word "stash" (warden's own REFUSE clause contains "stash")
+and NOT the read-only `git stash create` temper snapshot — and `temper-reviewer`
+in COMMAND/SKILL-REFERENCE form (R13, Task 4): the terminating freeze-guard is
+plain delve, NOT a `temper-reviewer` re-run, so a `temper-reviewer.md` dispatch
+trips it while a bare-word prose mention ("NOT a `temper-reviewer` re-run") does
+not. Exits 0 when every clause is present and no
 forbidden construct is found, 1 with a per-clause diff summary otherwise.
 Stdlib only, no argparse.
 
@@ -33,7 +40,8 @@ warden's SKILL.md to `REQUIRED_SUBSTRINGS` (label -> literal substring), or to
 `REQUIRED_ANY` (label -> alternatives, at least one must appear) for an OR clause.
 The frontmatter `name:`/`description:` guards live in `check_frontmatter()`; the
 I-W1 normalization guard lives in `check_forbidden()`; the fix-path command
-negatives (R11 `git commit -a`, R12 `git stash`) live in `check_negatives()`. The
+negatives (R11 `git commit -a`, R12 `git stash`, R13 `temper-reviewer`
+reference-form) live in `check_negatives()`. The
 `--selftest` GOOD/BAD samples are self-contained and must stay in sync — the
 per-clause RED cases are generated automatically from `REQUIRED_SUBSTRINGS` and
 `REQUIRED_ANY`, so a new required clause gets its own RED case for free; add a
@@ -71,6 +79,12 @@ REQUIRED_SUBSTRINGS: dict[str, str] = {
     "clean-tree precondition command": "git status --porcelain",
     "non-`fix:` subject label (M-c)": "chore(warden):",
     "dirty-tree REFUSE clause": "commit, stash, or clean untracked files",
+    # Task 4 — Ordering (F1) + read-only freeze-guard, design L280-422.
+    "freeze-guard SHA capture (F1 step 3 / I-W6)": "SHA_pre_redteam",
+    "terminating leg native report-only mode (F1 step 4 / I-W6)":
+        "native report-only mode",
+    "terminating leg does not pass --fix (F1 step 4 / I-W6)":
+        "does not pass `--fix`",
 }
 
 # label -> alternatives; at least ONE must appear (an OR clause). The dispatch
@@ -82,6 +96,16 @@ REQUIRED_ANY: dict[str, tuple[str, ...]] = {
     "fully-empty clean-tree wording": ("fully empty", "no untracked"),
     # M-c non-`fix:` mandate note (backticked or bare).
     "non-fix subject note (M-c)": ("non-`fix:`", "non-fix"),
+    # Task 4 — delve's `--fix` leg is pinned among the non-terminal fixers,
+    # BEFORE the red-team leg (design L334-336). Either the design's literal
+    # "before the red-team leg" phrasing or the shorthand satisfies it.
+    "delve pinned before the red-team leg (F1 step 1)":
+        ("before the red-team leg", "delve pinned before"),
+    # Task 4 — the terminating freeze-guard reviews an EMPTY range benignly
+    # (no "non-empty range" requirement — design L382-383). Each alternative
+    # carries both the `empty` anchor AND the benign-pass wording.
+    "empty-range benign-pass clause (F1 step 4 / I-W6)":
+        ("empty range and benignly passes", 'no "non-empty range" requirement'),
 }
 
 # I-W1 negative guard. Matches a real cross-scale normalization construct — a
@@ -105,6 +129,20 @@ _FORBIDDEN_NORMALIZATION = re.compile(
 # verbatim). Every mutating form (`git stash` bare / push / save / pop) trips it;
 # `git stash create` and the REFUSE-clause bare "stash" do not.
 _FORBIDDEN_GIT_STASH = re.compile(r"\bgit\s+stash\b(?!\s+create\b)")
+
+# R13 negative guard — `temper-reviewer` in COMMAND/SKILL-REFERENCE form. The
+# terminating freeze-guard (Ordering step 4) is deliberately **plain delve,
+# report-only** — NOT a `temper-reviewer` re-run. But warden's own prose must be
+# able to SAY that ("the freeze-guard is plain delve, NOT a `temper-reviewer`
+# re-run") without tripping its own guard — the same bare-word/command-form split
+# as R12 (M-o2). In THIS codebase `temper-reviewer` is only ever *dispatched* by
+# its template-file path — `temper-reviewer.md` (temper/SKILL.md:212, finish/
+# SKILL.md:60) or a `temper-reviewer/` dir — never by a `subagent_type` (it is a
+# prompt template run through the harness adapter, not a registered agent). So the
+# reference/dispatch form is exactly `temper-reviewer.md` / `temper-reviewer/`;
+# match that, never the bare word. Backticked prose (`` `temper-reviewer` ``,
+# followed by a backtick + " re-run", not `.md`) does NOT trip.
+_FORBIDDEN_TEMPER_REVIEWER = re.compile(r"\btemper-reviewer(?:\.md\b|/)")
 
 
 def check_frontmatter(text: str) -> list[str]:
@@ -145,7 +183,11 @@ def check_negatives(text: str) -> list[str]:
     leg's new/untracked files — the design mandates `git add -A && git commit`).
     R12: no `git stash` in COMMAND form (warden has no working-tree save/restore
     machinery; `git stash create`, temper's read-only snapshot, is exempt — see
-    `_FORBIDDEN_GIT_STASH`)."""
+    `_FORBIDDEN_GIT_STASH`). R13: no `temper-reviewer` in COMMAND/SKILL-REFERENCE
+    form (`temper-reviewer.md` / `temper-reviewer/`) — the terminating
+    freeze-guard is plain delve, not a `temper-reviewer` re-run; a bare prose
+    mention of `temper-reviewer` saying exactly that must NOT trip it — see
+    `_FORBIDDEN_TEMPER_REVIEWER`."""
     errs: list[str] = []
     if "git commit -a" in text:
         errs.append("forbidden `git commit -a` present (R11): warden must use "
@@ -155,6 +197,11 @@ def check_negatives(text: str) -> list[str]:
     if m:
         errs.append(f"forbidden `git stash` command present (R12): {m.group(0)!r} "
                     "— warden has no working-tree save/restore machinery")
+    m = _FORBIDDEN_TEMPER_REVIEWER.search(text)
+    if m:
+        errs.append(f"forbidden `temper-reviewer` dispatch/reference present "
+                    f"(R13): {m.group(0)!r} — the terminating freeze-guard is "
+                    "plain delve report-only, not a temper-reviewer re-run")
     return errs
 
 
@@ -220,6 +267,18 @@ non-`fix:` subject (`chore(warden): temper fixes <run-id>`, per M-c).
 Working-tree-clean precondition: warden asserts `git status --porcelain` is
 fully empty — no tracked modifications and no untracked files. Standalone warden
 on a dirty tree REFUSES: commit, stash, or clean untracked files, then re-run.
+
+## Ordering (F1)
+
+1. Non-terminal fixers first, with the delve `--fix` leg pinned among them,
+   before the red-team leg (step 3).
+3. Capture `SHA_pre_redteam = HEAD`, run the red-team leg, commit its residual.
+4. Read-only instance-bug freeze-guard: run plain delve in its
+   native report-only mode over `SHA_pre_redteam..HEAD`. If the range is empty the
+   terminating delve reviews an empty range and benignly passes — there is no
+   "non-empty range" requirement. warden does not pass `--fix` on this leg, so
+   it writes nothing into the frozen HEAD. This is plain delve, not a
+   `temper-reviewer` re-run.
 """
 
 # The negation prose above must NOT trip the I-W1 guard; a real
@@ -260,6 +319,26 @@ _GIT_STASH_CMD_SAMPLE = (
 # design L133-134) must NOT trip R12; the negative lookahead exempts it.
 _GIT_STASH_CREATE_SAMPLE = (
     "temper uses `git stash create` to snapshot the tree; it is read-only.\n")
+
+# ---- Task 4 temper-reviewer negative/allow samples (R13) ------------------
+# THE TASK-4 TRAP (parity with the R12 crux, M-o2): the terminating freeze-guard
+# is plain delve, NOT a `temper-reviewer` re-run — and warden's own prose must be
+# able to SAY that without tripping its own guard. So R13 matches only the
+# COMMAND/SKILL-REFERENCE form (`temper-reviewer.md` / `temper-reviewer/`), never
+# the bare word.
+# (a) R13 — dispatching the terminating leg AS temper-reviewer (its template-file
+#     reference form, how temper actually dispatches it) FAILS.
+_TEMPER_REVIEWER_DISPATCH_SAMPLE = (
+    _GOOD_SAMPLE + "\nBad: warden re-dispatches `temper-reviewer.md` over "
+    "`SHA_pre_redteam..HEAD` as the terminating leg.\n")
+
+# (b) THE CRUX allow-case: prose that merely NAMES `temper-reviewer` to say the
+#     freeze-guard is plain delve, NOT a temper-reviewer re-run, must NOT trip
+#     R13 (bare word, no `.md`/`/` reference suffix).
+_TEMPER_REVIEWER_PROSE_SAMPLE = (
+    "The terminating freeze-guard is plain delve report-only — it is "
+    "deliberately NOT a `temper-reviewer` re-run and runs no temper "
+    "enumeration at all.\n")
 
 
 def selftest() -> int:
@@ -322,11 +401,24 @@ def selftest() -> int:
     assert d_errs == [], (
         f"`git stash create` (read-only snapshot) must NOT trip R12, got: {d_errs}")
 
+    # 7. Task-4 temper-reviewer negative (R13) — both required cases.
+    # (a) a `temper-reviewer.md` dispatch/reference FAILS (R13).
+    ta_errs = check_negatives(_TEMPER_REVIEWER_DISPATCH_SAMPLE)
+    assert any("R13" in e for e in ta_errs), (
+        f"`temper-reviewer.md` dispatch should trip R13, got: {ta_errs}")
+    # (b) THE CRUX: prose naming `temper-reviewer` to say the freeze-guard is
+    #     NOT a temper-reviewer re-run must NOT trip R13 (bare word).
+    tb_errs = check_negatives(_TEMPER_REVIEWER_PROSE_SAMPLE)
+    assert tb_errs == [], (
+        f"bare-word `temper-reviewer` prose must NOT trip R13, got: {tb_errs}")
+
     print("selftest OK — GOOD passes; each required clause (incl. OR clauses), "
           "the I-W1 normalization negative, the R11 `git commit -a` and R12 "
           "`git stash`-command negatives (with the REFUSE-clause bare-word and "
-          "`git stash create` allow-cases), and the frontmatter guard each have "
-          "an exercised path.")
+          "`git stash create` allow-cases), the R13 `temper-reviewer` "
+          "reference-form negative (a: `temper-reviewer.md` dispatch FAILS; "
+          "b: bare-word prose 'NOT a temper-reviewer re-run' does NOT trip), and "
+          "the frontmatter guard each have an exercised path.")
     return 0
 
 

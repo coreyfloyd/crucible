@@ -207,5 +207,150 @@ fix mechanism beyond running `delve --fix` and committing **each leg's residual
 working-tree changes** (temper, delve, and the red-team leg — inquisitor/siege
 self-commit and leave no residual), as described above.
 
+## Ordering (F1 — the gate binds a single frozen final artifact)
+
+A gate's verdict is only fully sound if it is evaluated against the **final code
+state**. warden enforces this for the legs it re-evaluates on the frozen HEAD —
+**temper, delve, and the red-team leg** — by ordering the code-mutating legs and
+re-checking after later fixers (below). siege runs **twice** (neither pass at the
+frozen HEAD) and inquisitor runs **once** at its step-1 HEAD — accepted cost tradeoffs:
+
+- **siege** runs **twice**, **coverage-equal to build's two sieges (position
+  redistributed across the two passes)** — warden's siege#1 runs at step-1 (before the
+  step-2 re-temper), whereas build's Step-5.5 siege runs after Step-5's re-temper; the
+  step-2 re-temper is covered by siege#2, so this is a position redistribution, not a
+  coverage gap: (a) warden's **own siege leg** at the **step-1 HEAD** (≈ build Step 5.5),
+  and (b) the **quality-gate red-team leg's internal siege auto-dispatch** at the
+  red-team HEAD (`SHA_pre_redteam`, parallel with red-team round 1 — ≈ build Step 6). The
+  second siege covers the **step-2 scoped re-temper commits** and delve's `--fix` edits,
+  mirroring build's Step-6 siege over its Step-5.5.e re-temper. Re-running the 6-agent
+  Opus siege on *every* fix commit would be prohibitively expensive, so neither pass
+  binds the **frozen** HEAD: the only window either misses is the **red-team leg's own
+  fix rounds** — and build's Step-6 siege runs parallel with red-team round 1, so build
+  misses that window too. warden's siege coverage is therefore **coverage-equal to build's
+  two sieges (position redistributed across the two passes)** — no coverage reduction
+  relative to build.
+- **inquisitor** binds its step-1 HEAD (it is excluded from the terminating
+  read-only leg per S-D, since it writes tests). Its coverage is delivered by the
+  unconditional step-1 run; a later fixer regressing the cross-component surface is
+  out of scope for the cheap terminating pass — an accepted tradeoff. **inquisitor is
+  the sole leg that binds step-1-only** — siege now runs a second pass at
+  `SHA_pre_redteam`.
+
+Because the code-mutating legs edit the shared artifact the other legs already
+judged, warden runs them in a **deliberate order** that mirrors build Phase 4
+(temper → inquisitor → siege → quality-gate last, `build/SKILL.md:1212-1263`),
+committing **each leg's residual working-tree changes as it completes** so the frozen
+HEAD provably contains every leg's fixes (see Fix behavior — Universal per-leg residual
+commit):
+
+0. **Working-tree-clean precondition (inductive base — ASSERTED).** warden **asserts** a
+   **clean working tree at entry** on **all** paths (`git status --porcelain` **fully
+   empty** — no tracked modifications **and no untracked files**) — the base that makes
+   each per-leg residual commit capture only that leg's delta. Standalone `/warden` on a
+   **dirty-or-untracked** tree **REFUSES** with an actionable
+   error (`commit, stash, or clean untracked files, then re-run /warden`), matching
+   warden's detached-HEAD handling. Inside **build**, **build guarantees** the tree is
+   fully clean at warden entry (see the build-side integration requirement in Integration
+   mapping); a dirty **or untracked** tree at build→warden entry is a **surfaced
+   build/test defect** — warden errors, it never sweeps it into the first `chore(warden):`
+   commit. **Standalone `/warden` and standalone `/finish` both fall to the
+   assert-and-REFUSE rule** — only *build* supplies the clean-tree guarantee (finish has
+   no clean-tree gate of its own).
+1. **Non-terminal fixers first, each residual committed as it terminates.** Run the
+   **non-terminal** code-mutating legs — temper, inquisitor, siege, and warden-owned
+   delve fixes — to loop-termination first, in the build-mirroring order
+   temper → inquisitor → siege, with the **warden-owned `delve --fix` leg pinned among
+   these non-terminal fixers, before the red-team leg (step 3)** — so delve's cross-file
+   security-relevant edits are already committed when the red-team leg's internal
+   **second siege** runs at `SHA_pre_redteam`, keeping them inside that siege's coverage.
+   temper (uncommitted mode, `temper/SKILL.md:198`) and delve `--fix` are
+   working-tree-only and never commit, so after **each** such leg terminates — and
+   **before the next fixer leg runs** — warden **commits that leg's full residual
+   working-tree changes, if any** (`git add -A && git commit -m '<subject>'` — stages
+   new/untracked files too; no path-scoping), with a leg-labeled
+   non-`fix:` subject (`chore(warden): temper fixes <run-id>`, `chore(warden): delve fixes
+   <run-id>`, per M-c). Under the fully-empty clean-tree precondition (step 0) that
+   residual is exactly the current leg's delta (a new file the leg created is staged and
+   committed, and no pre-existing untracked file exists to misattribute). Committing between legs (not batched at the end) keeps
+   each residual attributable to the leg that produced it — so every non-terminal leg's
+   repairs enter HEAD with correct provenance (S-4; see Fix behavior). inquisitor
+   (`inquisitor/SKILL.md:163`) and siege **self-commit**, so their residual is empty and
+   the commit is a no-op for them. (The red-team leg is **also** a warden-committed fixer,
+   but as the **terminal** fixer its residual is committed at **step 3**, not here.)
+2. **Re-temper after later fixers (S1).** After inquisitor's, siege's, or delve's
+   fix path terminates, warden re-runs temper **scoped to that leg's fix
+   commits** before the red-team leg — mirroring build Step 5 (re-temper on
+   inquisitor commits) and Step 5.5.e (re-temper on siege commits). A fix that
+   satisfies siege's CVSS gate can still regress temper's maintainability/
+   correctness axis; this catches it. The scoped re-temper is itself a temper
+   (uncommitted-mode) fixer, so warden **commits its residual too**
+   (`chore(warden): temper fixes <run-id>`, per M-c) before proceeding. (This is
+   build's existing scoped re-temper, not a new open-ended fixpoint loop.)
+3. **Red-team leg (itself a fixer) next.** Once no non-terminal fixer has more
+   work, warden captures **`SHA_pre_redteam = HEAD`** and runs the quality-gate
+   red-team leg against that HEAD (invoked so its **internal siege auto-dispatch** runs —
+   warden does **not** suppress it — warden's **second** siege pass over `SHA_pre_redteam`,
+   parallel with red-team round 1, mirroring build's Step-6 siege; see the reviewer table
+   / I-W4). This leg **edits the working tree** — it
+   loops+fixes its red-team rounds but, like temper and delve, **does not commit** (its
+   fix agent has `apply-edits`/`run-tests` and no git step,
+   `quality-gate/SKILL.md:75,462`). So **warden commits the red-team leg's residual
+   working-tree changes, if any**, here — `chore(warden): red-team fixes <run-id>`,
+   non-`fix:` subject per M-c — advancing HEAD **before the terminating leg (step 4)
+   and the freeze**. The red-team fix range is then **`SHA_pre_redteam..HEAD`** — a
+   distinct, isolable range even though earlier legs also committed. These fixes land
+   after the other four gates were evaluated, so they must not ship un-re-reviewed —
+   which is exactly what the terminating freeze-guard (step 4) re-checks over **that**
+   range.
+4. **Read-only instance-bug freeze-guard over the red-team leg's fixes, then
+   freeze.** After the red-team leg's fix loop terminates **and warden has committed
+   its residual (step 3)**, warden runs **plain delve in its
+   native report-only mode** (`delve/SKILL.md:25`, "report only … never gates") over
+   **`SHA_pre_redteam..HEAD`** (the red-team leg's fix commits) — a **read-only
+   instance-bug freeze-guard**. If the red-team leg made no edits this range is
+   **empty**, and the terminating delve reviews an empty range and benignly passes —
+   there is no "non-empty range" requirement. warden does **not** pass `--fix` on this
+   leg
+   (`delve/SKILL.md:25,125`), so it is **provably non-code-mutating** — the
+   terminating leg writes **nothing** into the frozen HEAD. This is deliberately
+   **NOT** a temper-the-skill re-run: temper-the-skill is a fix loop (its Step 3 is
+   "**Fix every member of `T`**", `temper/SKILL.md:188`) and would mutate the frozen
+   HEAD. The terminating leg runs **no temper enumeration or adjudication at all** —
+   it is plain delve, run once. In particular the freeze-guard **does not pass `--fix`**
+   and is **not** a `temper-reviewer` re-run — it is plain report-only delve.
+
+   **Coverage scope (honest, bounded tradeoff).** The terminating leg is a
+   **read-only instance-bug freeze-guard** over the red-team leg's fix commits (plain
+   delve, report-only, `--fix` not passed → provably non-mutating). temper's broader
+   review angles are applied at step 1 and the scoped re-tempers; they are **not**
+   re-applied to the red-team fixer's own commits — an accepted, bounded tradeoff of
+   the same class build already lives with (e.g. its inquisitor-step-1-only carve-out).
+   This closes the coverage question by
+   **disclosing the scope**, not by asserting that delve's coverage subsumes
+   temper's. **inquisitor is likewise excluded** because it writes tests (S-D):
+   including it would land un-re-reviewed test files in the frozen HEAD, breaking the
+   very "single, fully-reviewed frozen artifact" guarantee this leg exists to
+   provide. inquisitor's coverage is delivered by its **unconditional step-1 run**;
+   the accepted tradeoff is that a red-team fix which regresses the cross-component
+   surface is **out of scope** for this cheap terminating pass (it would only be
+   caught on a subsequent full gate run).
+
+   This pass runs **exactly once** (detect → BLOCK): there is no fix loop, so no
+   round cap — warden **BLOCKs** if delve reports any gating finding
+   (`{CONFIRMED,PLAUSIBLE}×{Critical,Important}`); it does not re-fix or loop.
+   Because this **final leg warden runs is read-only**, the artifact is stable; only
+   then is HEAD frozen and the disjunction evaluated on that single frozen final
+   artifact, with the verdict bound to the frozen HEAD SHA. Because warden committed
+   **every leg's residual as it completed** (temper's and delve's at steps 1–2, the
+   red-team leg's in step 3), **the frozen HEAD now contains every leg's fixes** — so
+   F1's "single frozen final artifact" guarantee covers temper's uncommitted-mode fixes
+   and the red-team leg's own repairs, not only the legs that self-commit. The verdict
+   and its marker (and the ledger `gated_files`/SHA) therefore bind a HEAD that
+   **contains the fixes that earned the PASS** — closing the broken verdict-to-artifact
+   binding F-A raised.
+
+This is codified as invariant **I-W6**.
+
 <!-- SCAFFOLD: later #464 Phase-A tasks author the remaining sections
-(ordering, gate/enforcement, double-run avoidance, integration, invariants). -->
+(gate/enforcement, double-run avoidance, integration, invariants). -->
