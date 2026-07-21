@@ -41,6 +41,10 @@ run python3 scripts/check_crossref.py --selftest
 run python3 scripts/check_crossref.py
 run python3 scripts/catalog.py check
 
+# --- warden structural checks (#464) ---
+run python3 scripts/check_warden_structure.py --selftest
+run python3 scripts/check_warden_structure.py
+
 # --- Receipt-verify (rcpt_verify) ---
 run python3 scripts/rcpt_verify.py --selftest
 run python3 scripts/test_rcpt_verify.py
