@@ -493,11 +493,11 @@ the marker must not be relied on as the de-dup mechanism after a fixing run.
 
 warden's hardest routing problem is that it **runs temper as a leg**, so the
 user-facing intents overlap ("review before I push" vs "is this ready to ship").
-This is resolved here, not deferred to selection-evals alone: temper's **live**
-description already claims "before merging" (`temper/SKILL.md:3`) — the exact
-push-gate intent warden wants — so the fix also **edits temper's description** to
-cede that phrasing (temper's description cedes this — see §Routing boundary; the temper
-edit lands in Phase B/E) as well as constraining warden's. Selection-evals prove point-in-time routing; the
+This is resolved here, not deferred to selection-evals alone: temper's
+description **previously** claimed "before merging" (`temper/SKILL.md:3`) — the exact
+push-gate intent warden wants — so the fix also **edited temper's description** to
+cede that phrasing (ceded by this change — see §Routing boundary) as well as
+constraining warden's. Selection-evals prove point-in-time routing; the
 description edit removes the standing overlap (MEMORY #371/#358: description-phrase
 collisions are fixed by editing the descriptions, not by evals alone).
 
@@ -508,10 +508,17 @@ The discriminator is **whole-set gate** (warden) vs **single reviewer**
 
 | Phrase / intent | Owner | Why |
 |---|---|---|
-| "gate this before I push", "run the full review gate", "run all the reviewers", "warden", "review my changes **before I push**" / "**before pushing**" / "**before merging**" | **warden** | wants the whole reviewer set + one verdict; the "before I push" / "before pushing" / "before merging" push-gate fragment is warden-owned even when attached to "review my changes" (M2 / S-C — "before merging" ceded from temper's live description) |
+| "gate this before I push", "run the full review gate", "run all the reviewers", "warden", "review my changes **before I push**" / "**before pushing**" / "**before merging**" | **warden** | wants the whole reviewer set + one verdict; the "before I push" / "before pushing" / "before merging" push-gate fragment is warden-owned even when attached to "review my changes" (M2 / S-C — "before merging" ceded from temper's former description) |
 | "is this ready to ship", "review my changes" (bare), "review this PR", "code review", "check the diff" | **temper** (kept) | single fresh-eyes merge-verdict review; temper's existing description keeps these — but a trailing "before I push" / "before pushing" / "before merging" hands the utterance to warden (M2 / S-C) |
 | "red-team this", "quality gate this design/plan", "is this design sound" | **quality-gate** | red-team of a typed artifact, not a code push gate |
 | "find bugs in this diff", "scan this for defects", "instance-bug sweep" | **delve** | report-only bug finder, not a gate |
+
+A trailing "before I create a PR" / "before a PR" is a review-readiness cue, **not** a
+push-gate cue, so it **stays with temper** — *unless* the utterance also carries a gate
+cue ("gate", "the full review gate", "before I push" / "before pushing" / "before
+merging"), which hands it to warden. (The phrase-ownership table is silent on
+"before … a PR" by design: the existing `review my changes before I create a PR`
+selection-eval routes to temper and is not flipped by this change.)
 
 warden deliberately does **not** claim temper's "is this ready to ship" / "review
 my changes" phrases (I-W3): a fresh-eyes single-reviewer pass stays with temper,

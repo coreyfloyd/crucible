@@ -619,6 +619,76 @@
       "context": "A single completed implementation; the ask is to write tests that break that one component.",
       "reasoning": "adversarial-tester reads one implementation and writes up to 5 tests designed to make it break — per-task, single component. inquisitor is for a fully-assembled multi-component feature hunting cross-component bugs, not one function. test-coverage audits existing tests for staleness, not adversarial break-it tests.",
       "difficulty": "medium"
+    },
+    {
+      "id": "warden-gate-direct-01",
+      "dimension": "direct",
+      "boundary": "warden-gate",
+      "prompt": "gate my changes before I push",
+      "expected_skill": "warden",
+      "common_mistakes": [
+        "temper",
+        "quality-gate"
+      ],
+      "context": "User wants the whole pre-push review gate run over their changes, not a single reviewer.",
+      "reasoning": "The 'gate ... before I push' push-gate cue routes to warden \u2014 the whole-set gate that runs temper, delve, red-team, siege, and inquisitor and returns one verdict. temper is a single fresh-eyes merge-verdict reviewer (one leg of warden); quality-gate red-teams a typed artifact, not a code push gate.",
+      "difficulty": "medium"
+    },
+    {
+      "id": "warden-gate-direct-02",
+      "dimension": "direct",
+      "boundary": "warden-gate",
+      "prompt": "is this PR ready to ship?",
+      "expected_skill": "temper",
+      "common_mistakes": [
+        "warden",
+        "quality-gate"
+      ],
+      "context": "User wants a single fresh-eyes production-readiness verdict on a PR, with no push-gate or whole-set cue.",
+      "reasoning": "'is this ready to ship' is temper's single-reviewer merge-verdict trigger and carries NO push-gate cue ('gate', 'the full review gate', 'before I push/pushing/merging'), so it stays with temper and does NOT escalate to warden's whole-set gate. This is the discriminator case: whole-set gate (warden) vs single reviewer (temper).",
+      "difficulty": "hard"
+    },
+    {
+      "id": "warden-gate-direct-03",
+      "dimension": "direct",
+      "boundary": "warden-gate",
+      "prompt": "run the full review gate on this branch",
+      "expected_skill": "warden",
+      "common_mistakes": [
+        "temper",
+        "quality-gate"
+      ],
+      "context": "User explicitly asks for the full review gate across a branch, i.e. all the reviewers plus one verdict.",
+      "reasoning": "'the full review gate' names warden's whole reviewer set (temper + delve + red-team + siege + inquisitor) folded into a single verdict. temper alone is one leg; quality-gate is red-team of a typed artifact. The 'full ... gate' cue selects warden.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "warden-gate-direct-04",
+      "dimension": "direct",
+      "boundary": "warden-gate",
+      "prompt": "review my changes before I push",
+      "expected_skill": "warden",
+      "common_mistakes": [
+        "temper",
+        "quality-gate"
+      ],
+      "context": "'review my changes' overlaps temper, but the trailing 'before I push' is a push-gate cue.",
+      "reasoning": "Bare 'review my changes' is temper's, but the trailing 'before I push' push-gate fragment is warden-owned even when attached to 'review my changes' (the exact collision #464 resolves by ceding push-gate phrasing from temper's description to warden). The push-gate cue hands the utterance to warden's whole-set gate.",
+      "difficulty": "hard"
+    },
+    {
+      "id": "warden-gate-direct-05",
+      "dimension": "direct",
+      "boundary": "warden-gate",
+      "prompt": "review my changes before merging",
+      "expected_skill": "warden",
+      "common_mistakes": [
+        "temper",
+        "quality-gate"
+      ],
+      "context": "'review my changes' overlaps temper, but the trailing 'before merging' is a push-gate cue ceded from temper to warden.",
+      "reasoning": "'before merging' is the push-gate phrasing #464 removed from temper's description and assigned to warden. Attached to 'review my changes' it routes to warden's whole-set pre-push gate, not temper's single-reviewer pass. temper keeps only bare 'review my changes' / 'is this ready to ship'.",
+      "difficulty": "hard"
     }
   ]
 }

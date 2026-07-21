@@ -71,6 +71,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILL = ROOT / "skills/warden/SKILL.md"
+TEMPER_SKILL = ROOT / "skills/temper/SKILL.md"
 
 # label -> literal substring that MUST appear somewhere in SKILL.md. Later
 # Phase-A tasks EXTEND this dict; the selftest generates a RED case per entry.
@@ -168,6 +169,18 @@ _OWNED_TRIGGER_PHRASES: tuple[str, ...] = (
     "find bugs in this diff",  # delve (report-only bug finder)
     "instance-bug sweep",      # delve
 )
+
+# I-W3 (temper side, Task 9) — the routing collision is resolved in BOTH
+# descriptions: warden must not claim temper's phrases (above), AND temper cedes
+# the push-gate phrasing that now routes to warden. So temper's `description`
+# must NOT carry a push-gate cue ("before merging" / "before I push" / "before
+# pushing") — those hand the utterance to warden — while it MUST keep its
+# single-reviewer merge-verdict trigger ("is this ready to ship"). Checked on the
+# lowercased `description:` value (via `_extract_description`), so casing in the
+# real file doesn't matter.
+_TEMPER_BANNED_PUSH_PHRASES: tuple[str, ...] = (
+    "before merging", "before i push", "before pushing")
+_TEMPER_REQUIRED_PHRASE = "is this ready to ship"
 
 # label -> alternatives; at least ONE must appear (an OR clause). The dispatch
 # frames these as disjunctions, so requiring both alternatives would be stricter
@@ -309,6 +322,35 @@ def check_description_negatives(text: str) -> list[str]:
                         "reviewer (temper/quality-gate/delve), not warden's "
                         "whole-set gate")
     return errs
+
+
+def check_temper_description(desc: str) -> list[str]:
+    """I-W3 (temper side): temper's frontmatter `description` must NOT carry a
+    push-gate cue (ceded to warden by this build — "before merging" / "before I
+    push" / "before pushing") and MUST keep its single-reviewer merge-verdict
+    trigger ("is this ready to ship"). `desc` is the lowercased `description:`
+    value (via `_extract_description`). Pure, so `--selftest` can exercise it."""
+    errs: list[str] = []
+    for phrase in _TEMPER_BANNED_PUSH_PHRASES:
+        if phrase in desc:
+            errs.append(f"push-gate phrase still in temper description "
+                        f"(I-W3): {phrase!r} — ceded to warden by #464; temper's "
+                        "description keeps single-reviewer phrasing only")
+    if _TEMPER_REQUIRED_PHRASE not in desc:
+        errs.append(f"temper description dropped its single-reviewer trigger "
+                    f"(I-W3): missing {_TEMPER_REQUIRED_PHRASE!r} — temper keeps "
+                    "the fresh-eyes merge-verdict cue after ceding the push-gate")
+    return errs
+
+
+def check_temper_description_file() -> list[str]:
+    """Read the real `skills/temper/SKILL.md` and run the I-W3 temper-side guard
+    on its frontmatter `description` value. A filesystem check (like
+    `check_emission_surface_files`), so it lives in `main()`, not `--selftest`."""
+    if not TEMPER_SKILL.is_file():
+        return [f"{TEMPER_SKILL.relative_to(ROOT)} does not exist"]
+    desc = _extract_description(TEMPER_SKILL.read_text(encoding="utf-8"))
+    return check_temper_description(desc)
 
 
 def check_forbidden(text: str) -> list[str]:
@@ -632,6 +674,24 @@ _DESC_OWNED_PHRASE_SAMPLE = _GOOD_SAMPLE.replace(
     "description: Full gate — use when you want to know is this ready to ship.")
 
 
+# ---- Task 9 I-W3 temper-side description samples ---------------------------
+# temper's ceded `description` (lowercased, as `_extract_description` returns it):
+# single-reviewer phrasing only, keeps the merge-verdict trigger, carries NO
+# push-gate cue.
+_TEMPER_DESC_GOOD = (
+    'iteratively review code changes for production readiness through fresh-eyes '
+    'review loops. use when completing tasks, implementing major features, or '
+    'reviewing a change for production readiness — including when the user says '
+    '"review this pr", "review my changes", "code review", "check the diff", or '
+    '"is this ready to ship". works on prs from any forge or on raw git sha ranges.')
+# A re-added push-gate cue must FAIL (I-W3): reintroduce "before merging".
+_TEMPER_DESC_BANNED = _TEMPER_DESC_GOOD.replace(
+    "reviewing a change for production readiness", "before merging")
+# Dropping the single-reviewer trigger must FAIL (I-W3).
+_TEMPER_DESC_MISSING_TRIGGER = _TEMPER_DESC_GOOD.replace(
+    "is this ready to ship", "does it look ok")
+
+
 def selftest() -> int:
     # 1. GOOD sample passes every assertion.
     good_errs = check_text(_GOOD_SAMPLE)
@@ -737,8 +797,21 @@ def selftest() -> int:
         "owned phrases in the BODY (phrase-ownership table) must NOT trip the "
         "description-scoped I-W3 negative, got: "
         f"{check_description_negatives(_GOOD_SAMPLE)}")
-    # (The emission-surface scan over the shipped scripts is a filesystem check,
-    # so it stays in `main()` — not here — keeping `--selftest` purely in-memory.)
+    # 12. Task-9 I-W3 temper-side description guard — GOOD (ceded) passes; a
+    #     re-added push-gate cue FAILS; dropping the merge-verdict trigger FAILS.
+    assert check_temper_description(_TEMPER_DESC_GOOD) == [], (
+        "ceded temper description should pass, got: "
+        f"{check_temper_description(_TEMPER_DESC_GOOD)}")
+    tban_errs = check_temper_description(_TEMPER_DESC_BANNED)
+    assert any("before merging" in e for e in tban_errs), (
+        f"a push-gate cue in temper's description should FAIL (I-W3), got: {tban_errs}")
+    tmiss_errs = check_temper_description(_TEMPER_DESC_MISSING_TRIGGER)
+    assert any("is this ready to ship" in e for e in tmiss_errs), (
+        f"dropping temper's merge-verdict trigger should FAIL (I-W3), got: {tmiss_errs}")
+
+    # (The emission-surface scan over the shipped scripts and the temper-side
+    # description read are filesystem checks, so they stay in `main()` — not here
+    # — keeping `--selftest` purely in-memory.)
 
     print("selftest OK — GOOD passes; each required clause (incl. OR clauses), "
           "the I-W1 normalization negative, the R11 `git commit -a` and R12 "
@@ -771,6 +844,7 @@ def main() -> int:
 
     errs = check_text(SKILL.read_text(encoding="utf-8"))
     errs.extend(check_emission_surface_files())
+    errs.extend(check_temper_description_file())
     if errs:
         print("WARDEN STRUCTURE CHECK FAILED:")
         for e in errs:
