@@ -1,0 +1,15 @@
+{
+  "fixture_id": "tw3-standalone-multifile",
+  "obligation": "T-W3 — in the STANDALONE reviewer-set, inquisitor RUNS on a multi-file diff (>1 changed file OR >1 top-level module)",
+  "reviewer_set_mode": "standalone",
+  "scope": "HEAD~1..HEAD",
+  "diff_shape": "NON-security, multi-file — 3 changed files across 2 top-level modules; satisfies the standalone inquisitor trigger (>1 file OR >1 module)",
+  "per_leg_verdict_vector": {
+    "temper": "clean",
+    "delve": "clean",
+    "red-team": "quality-gate verdict PASS",
+    "siege": "NOT RUN — condition-skipped (non-security diff)",
+    "inquisitor": "RUNS (multi-file) — all adversarial tests PASS"
+  },
+  "_note": "Operator input for the live /warden run. The scorer never reads this file."
+}

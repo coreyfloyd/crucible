@@ -1,0 +1,15 @@
+{
+  "fixture_id": "tw3-standalone-singlefile",
+  "obligation": "T-W3 — in the STANDALONE reviewer-set, inquisitor is SKIPPED on a single-file diff",
+  "reviewer_set_mode": "standalone",
+  "scope": "HEAD~1..HEAD",
+  "diff_shape": "NON-security, single-file — 1 changed file in 1 top-level module; fails the standalone inquisitor trigger",
+  "per_leg_verdict_vector": {
+    "temper": "clean",
+    "delve": "clean",
+    "red-team": "quality-gate verdict PASS",
+    "siege": "NOT RUN — condition-skipped (non-security diff)",
+    "inquisitor": "NOT RUN — condition-skipped (single-file diff, standalone set)"
+  },
+  "_note": "Operator input for the live /warden run. The scorer never reads this file."
+}

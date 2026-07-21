@@ -142,6 +142,11 @@ run python3 scripts/check_siege_helper_drift.py
 run python3 scripts/check_siege_gt_provenance.py --selftest
 run python3 scripts/check_siege_gt_provenance.py
 
+# --- warden eval harness (#464) ---
+run python3 -m pytest skills/warden/evals/ -q
+run python3 scripts/check_warden_helper_drift.py --selftest
+run python3 scripts/check_warden_helper_drift.py
+
 # --- Catalog unit suite ---
 run python3 scripts/test_catalog.py
 
