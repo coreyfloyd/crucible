@@ -24,8 +24,27 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 from skills.warden.evals import run_evals  # noqa: E402
+from skills.warden.evals._scorer import score_outcome  # noqa: E402
 
 _EVALS_DIR = pathlib.Path(__file__).resolve().parent
+
+
+class TestScorerContract(unittest.TestCase):
+    def test_empty_expected_is_vacuous_and_must_be_guarded(self):
+        # The raw comparator over an empty `expected` reports all_pass True with ZERO
+        # fields (all([]) is True) — a vacuous pass. This is exactly why score() guards
+        # `all_pass and n_fields > 0` and test_fixtures.py forbids shipping an empty
+        # `expected`. This test pins the boundary so the guard's necessity is explicit.
+        result = score_outcome({}, {"verdict": "PASS"})
+        self.assertEqual(result["n_fields"], 0)
+        self.assertTrue(result["all_pass"])  # vacuous — must not be trusted alone
+
+    def test_missing_recorded_field_fails(self):
+        # A field asserted in expected but absent from the recording is a FAIL (an
+        # unrecorded assertion is not a pass), not a KeyError.
+        result = score_outcome({"verdict": "PASS"}, {})
+        self.assertFalse(result["all_pass"])
+        self.assertFalse(result["fields"][0]["recorded_present"])
 
 # A hand-authored recorded outcome for the `tw6-clean-pass` fixture that MATCHES its
 # ground truth (all 5 reviewers ran on the security diff, clean → PASS, single
@@ -139,6 +158,41 @@ class TestScoreMismatch(_DispatchEnv):
         # forbidden `fix:` subject caught
         self.assertFalse(by_field["leg_commit_subjects"]["pass"])
         # the fields that DO agree still pass (the scorer is per-field, not all-or-none)
+        self.assertTrue(by_field["reviewer_set"]["pass"])
+        self.assertTrue(by_field["marker"]["pass"])
+
+
+# A recorded outcome for tw5-marker-temper-fix whose ONLY defect is a `fix:`-prefixed
+# leg subject where the ground truth mandates the non-`fix:` `chore(warden):` shape (M-c).
+# The subjects list has the SAME length as the GT's, so this isolates chore-vs-fix
+# discrimination (not merely "a spurious commit exists").
+TW5_FIX_PREFIX = {
+    "reviewer_set": ["temper", "delve", "red-team", "inquisitor"],
+    "verdict": "PASS",
+    "marker": {
+        "aggregate_marker_count": 1,
+        "aggregate_pipeline_id_source": "caller",
+        "aggregate_build_tagged": True,
+        "redteam_leg_marker_pipeline_id_source": "warden",
+        "redteam_leg_marker_build_tagged": False,
+    },
+    "leg_commit_subjects": ["fix(warden): temper fixes <run-id>"],  # M-c violation
+}
+
+
+class TestScoreMcGuard(_DispatchEnv):
+    def test_score_catches_fix_prefix_at_equal_length(self):
+        # Proves the scorer discriminates the FORBIDDEN `fix:` prefix from the mandated
+        # `chore(warden):` one even when the subjects list length matches the GT — the
+        # M-c non-`fix:` guard specifically, not just "an extra commit appeared".
+        rc, lr = self._score_one("test-w-mc", "tw5-marker-temper-fix", TW5_FIX_PREFIX)
+        self.assertEqual(rc, 0)
+        pf = lr["per_fixture"][0]
+        self.assertFalse(pf["all_pass"])
+        by_field = {f["field"]: f for f in pf["fields"]}
+        self.assertFalse(by_field["leg_commit_subjects"]["pass"])
+        # every OTHER field agrees — the single isolated defect is the subject prefix
+        self.assertTrue(by_field["verdict"]["pass"])
         self.assertTrue(by_field["reviewer_set"]["pass"])
         self.assertTrue(by_field["marker"]["pass"])
 

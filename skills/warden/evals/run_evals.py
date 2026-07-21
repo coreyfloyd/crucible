@@ -209,7 +209,13 @@ def score(run_id: str, *, allow_incomplete: bool = False) -> int:
             fields = result["fields"]
             n_fields = result["n_fields"]
             n_pass = result["n_pass"]
-            all_pass = result["all_pass"]
+            # Anti-vacuous-pass guard: `all([])` is True, so a fixture with an empty
+            # `expected` would otherwise score all_pass with zero assertions — a hole in
+            # the "score must be able to FAIL" guarantee. A scored (non-dispatch-failed)
+            # fixture that asserted NOTHING is a FAIL, not a rubber-stamp pass. (The
+            # committed fixtures are also validated in test_fixtures.py so this never
+            # ships, but the guard makes the property structural, not fixture-dependent.)
+            all_pass = result["all_pass"] and n_fields > 0
 
         total_fields += n_fields
         total_pass += n_pass
