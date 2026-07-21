@@ -85,6 +85,15 @@ REQUIRED_SUBSTRINGS: dict[str, str] = {
         "native report-only mode",
     "terminating leg does not pass --fix (F1 step 4 / I-W6)":
         "does not pass `--fix`",
+    # Task 5 — Gate + enforcement (fail-closed escalation / dead-leg / M5),
+    # design L424-449 + failure-modes L954-963.
+    "fail-closed keyword (Gate)": "fail-closed",
+    "BLOCKED verdict keyword (Gate)": "BLOCKED",
+    "escalation folds into BLOCKED (Gate)": "an escalation folds into `BLOCKED`",
+    "dead-leg fail-closed BLOCK (unrun gate is not a pass)":
+        "an unrun gate is not a pass",
+    "condition-skipped is a normal PASS input, not a failure (M5)":
+        "normal PASS input, not a failure",
 }
 
 # label -> alternatives; at least ONE must appear (an OR clause). The dispatch
@@ -279,6 +288,15 @@ on a dirty tree REFUSES: commit, stash, or clean untracked files, then re-run.
    "non-empty range" requirement. warden does not pass `--fix` on this leg, so
    it writes nothing into the frozen HEAD. This is plain delve, not a
    `temper-reviewer` re-run.
+
+## Gate + enforcement
+
+warden's verdict is `BLOCKED` if any run reviewer's native gate trips. Escalation
+verdicts are fail-closed (BLOCKED, never PASS): an escalation folds into `BLOCKED`
+and halts the pipeline. A reviewer sub-dispatch that dies is fail-closed too —
+warden surfaces the failed leg and returns `BLOCKED` (an unrun gate is not a pass),
+never silently drops it. A correctly condition-skipped leg is a
+normal PASS input, not a failure (M5).
 """
 
 # The negation prose above must NOT trip the I-W1 guard; a real
@@ -339,6 +357,13 @@ _TEMPER_REVIEWER_PROSE_SAMPLE = (
     "The terminating freeze-guard is plain delve report-only — it is "
     "deliberately NOT a `temper-reviewer` re-run and runs no temper "
     "enumeration at all.\n")
+
+# ---- Task 5 gate/enforcement negative sample (dead-leg fail-open) ----------
+# THE FAIL-OPEN FOOTGUN: a §Gate that DROPS the dead-leg fail-closed clause —
+# a died sub-dispatch silently treated as a pass instead of BLOCKED — must be
+# flagged. Removing the "an unrun gate is not a pass" clause trips its label.
+_GATE_MISSING_UNRUN_SAMPLE = _GOOD_SAMPLE.replace(
+    "an unrun gate is not a pass", "it is fine")
 
 
 def selftest() -> int:
@@ -411,6 +436,12 @@ def selftest() -> int:
     tb_errs = check_negatives(_TEMPER_REVIEWER_PROSE_SAMPLE)
     assert tb_errs == [], (
         f"bare-word `temper-reviewer` prose must NOT trip R13, got: {tb_errs}")
+
+    # 8. Task-5 gate negative — dropping the dead-leg fail-closed clause (a
+    #    fail-open footgun: a died sub-dispatch treated as pass) is flagged.
+    g_errs = check_text(_GATE_MISSING_UNRUN_SAMPLE)
+    assert any("unrun gate is not a pass" in e for e in g_errs), (
+        f"dropping the dead-leg fail-closed clause should be flagged, got: {g_errs}")
 
     print("selftest OK — GOOD passes; each required clause (incl. OR clauses), "
           "the I-W1 normalization negative, the R11 `git commit -a` and R12 "

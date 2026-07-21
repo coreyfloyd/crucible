@@ -352,5 +352,41 @@ commit):
 
 This is codified as invariant **I-W6**.
 
+## Gate + enforcement
+
+warden's verdict is `BLOCKED` if any run reviewer's native gate trips after its
+fix path terminates — its own loop, or warden-owned delve/red-team fixes, evaluated
+on the frozen final HEAD per the Ordering section (I-W6) — else `PASS`.
+
+**Escalation verdicts are fail-closed (BLOCKED, never PASS).** The native gate
+predicates above are stated over *findings*, but a leg can also terminate on an
+**escalation** verdict rather than a findings predicate: temper Stagnation /
+Architectural / Max-Rounds (`temper/SKILL.md:332`) from the step-1 / scoped
+re-temper legs, or the quality-gate red-team leg STAGNATION / ESCALATED. Any such
+escalation **propagates as a warden BLOCK (fail-closed) — never a PASS** — the same
+handling build Phase 4 already gives a quality-gate escalation today (it does not
+swallow it). warden mints no third verdict: an escalation folds into `BLOCKED` and
+halts the pipeline like any other block.
+
+**A reviewer sub-dispatch that dies is fail-closed too (an unrun gate is not a
+pass).** If a reviewer sub-dispatch **dies** (crashes, times out, or returns no
+parseable receipt), warden **surfaces the failed leg and returns `BLOCKED`**
+(fail-closed — **an unrun gate is not a pass**), never silently drops it. A
+**condition-skipped** leg (siege on a non-security diff, standalone-inquisitor on a
+single-file diff) is **not** an "unrun gate" for this rule: only a leg that was
+*supposed to run* and died triggers the fail-closed BLOCK; a correctly
+condition-skipped leg is a **normal PASS input, not a failure** (M5).
+
+Enforcement teeth:
+
+- **Inside build/finish (real teeth):** a `BLOCKED` warden verdict halts the
+  pipeline before the push/PR step, exactly like quality-gate non-PASS halts
+  Phase 4 today.
+- **Standalone `/warden` (honored, not intercepting):** a slash command cannot
+  intercept `git push`; standalone warden emits a `BLOCKED` verdict the user
+  honors — same enforcement strength finish's soft gate has today, but now
+  named and consistent. No git hook (rejected: per-push Opus fan-out cost +
+  install friction; may revisit as an opt-in follow-up).
+
 <!-- SCAFFOLD: later #464 Phase-A tasks author the remaining sections
-(gate/enforcement, double-run avoidance, integration, invariants). -->
+(double-run avoidance, integration, invariants). -->
