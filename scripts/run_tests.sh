@@ -46,6 +46,8 @@ run python3 scripts/check_warden_structure.py --selftest
 run python3 scripts/check_warden_structure.py
 run python3 scripts/check_build_clean_tree_contract.py --selftest
 run python3 scripts/check_build_clean_tree_contract.py
+run python3 scripts/check_warden_integration.py --selftest
+run python3 scripts/check_warden_integration.py
 
 # --- Receipt-verify (rcpt_verify) ---
 run python3 scripts/rcpt_verify.py --selftest
