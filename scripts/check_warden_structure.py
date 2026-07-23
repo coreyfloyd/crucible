@@ -97,6 +97,19 @@ REQUIRED_SUBSTRINGS: dict[str, str] = {
     "reviewer leg: inquisitor": "inquisitor",
     "reviewer-set parameter (full | standalone)": "reviewer-set: full | standalone",
     "inquisitor unconditional in full set": "unconditional",
+    # Task (warden risk-tier) — standalone inquisitor risk-aware predicate, #466.
+    # Each pin proves a predicate CLAUSE EXISTS in SKILL.md (structural teeth only;
+    # the predicate is never executed in CI — see design AC3 / §Live-validation).
+    "standalone inquisitor retained reach clause":
+        ">1 changed file OR >1 top-level module",
+    "standalone inquisitor interface escalator": "INTERFACE/API/SCHEMA glob set",
+    "standalone inquisitor dependency escalator": "DEPENDENCY/lockfile glob set",
+    "standalone inquisitor binary fail-safe": "binary or otherwise unparseable path",
+    "standalone inquisitor pure-doc skip": "EVERY changed path is a PURE-DOC file",
+    # Structural teeth for the previously-unpinned INV-P invariants block (design
+    # L89-104): anchors that the invariants block EXISTS, not just the clause literals.
+    # (Monotonicity/residual-risk paragraphs carry no pinned literal — inspection-only.)
+    "standalone inquisitor predicate INV-P block": "INV-P8",
     # Task 3 — fix behavior (Universal per-leg residual commit + clean-tree
     # precondition), design L125-278.
     "per-leg residual commit primitive (M-c)": "git add -A && git commit",
@@ -515,6 +528,20 @@ The "Runs" column is split by reviewer-set: full | standalone.
 | red-team | always | always | quality-gate ≠ PASS | via quality-gate |
 | siege | conditional | conditional | Critical>0 | 6-agent Opus audit |
 | inquisitor | always (unconditional) | conditional | any FAIL | stays unconditional in full |
+
+## Standalone inquisitor-inclusion predicate
+
+Evaluated on the entry diff, in order (escalators dominate; strictly additive):
+1. any changed path matches the INTERFACE/API/SCHEMA glob set, or the
+   DEPENDENCY/lockfile glob set, or the diff has a binary or otherwise unparseable path
+   → run inquisitor (fail-safe: unknown → run).
+2. else if EVERY changed path is a PURE-DOC file (`.md`/`.rst`/`.adoc` by extension,
+   any depth; no `docs/**` catch-all) → skip inquisitor.
+3. else if >1 changed file OR >1 top-level module touched → run inquisitor.
+4. else → skip inquisitor.
+
+Predicate invariants: INV-P1..INV-P10 (INV-P8 = pure-doc bounded; escalator
+over-match disclosed in residual-risk).
 
 ## Fix behavior
 
