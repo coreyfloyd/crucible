@@ -90,10 +90,11 @@ convention). A code file (e.g. `docs/conf.py`), a binary, or an interface author
 under `docs/` is **not** a pure-doc file, so a diff containing one is not all-doc and
 does not take block 2.
 
-**Monotonicity (strictly additive).** The predicate only ever *adds* inquisitor runs
+**Monotonicity (additive except the one bounded block-2 doc-subtraction).** The predicate only ever *adds* inquisitor runs
 relative to today's `>1 file OR >1 module` clause (blocks 1 + 3 are a superset of it)
 or *removes* a run for a provably-safe all-doc diff (block 2). A single-file
-non-escalator code diff still skips exactly as today (block 4); no input that ran
+non-escalator code diff still skips exactly as today (block 4). Aside from the one
+provably-safe block-2 all-doc subtraction noted above, no input that ran
 inquisitor under the old clause now skips it.
 
 **Residual risk.** (a) *Escalator over-match:* several escalator globs swallow common
@@ -695,8 +696,9 @@ numbers are added.
 *Checkable by inspection:*
 - INV-P1: the predicate is orchestrator-followed prose only — no classifier binary, no
   `gate_logic.py`.
-- INV-P2: strictly additive — it only adds inquisitor runs (escalators) or removes one for
-  a provably-safe all-doc diff; it never narrows today's `>1 file OR >1 module` reach.
+- INV-P2: additive except one bounded subtraction — it only adds inquisitor runs (escalators)
+  or removes one for a provably-safe all-doc diff; it narrows today's `>1 file OR >1 module`
+  reach ONLY for the provably-safe all-doc case (block 2).
 - INV-P3: the retained reach clause `>1 changed file OR >1 top-level module` is preserved
   verbatim as block 3.
 - INV-P4: escalators are evaluated first and dominate the pure-doc skip (block order
