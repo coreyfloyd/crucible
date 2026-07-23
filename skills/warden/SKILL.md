@@ -39,7 +39,7 @@ The "Runs" column is split by **reviewer-set** (the dispatch parameter
 | delve | always | always | any kept finding at `{CONFIRMED,PLAUSIBLE} × {Critical,Important}` (trio scale; `PLAUSIBLE@Crit/Imp` is a real regression per contract) | delve is **report-only with no fix loop** — warden applies the predicate to delve's kept findings and owns the fix path (see Fix behavior) |
 | red-team (via quality-gate) | always | always | quality-gate verdict ≠ PASS (Fatal>0 ∨ Significant>0) | delegates to existing `crucible:quality-gate` on the `code` artifact to reuse its red-team loop, invoked so the QG leg **re-dispatches siege** exactly as build's Step-6 gate does (warden does **not** suppress the QG-internal siege) — the second of warden's two siege passes (I-W4 / S-A); the leg's marker is **not** build-tagged (see §Verdict marker ownership / I-W7) — warden owns the aggregate verdict marker; it writes **no** calibration ledger entry (each leg self-emits its native entry, I-W8) |
 | siege | conditional — security-surface diff (reuse build's existing Step 5.5 trigger) | conditional — same security-surface trigger | Critical>0 ∨ High>0 | heavy 6-agent Opus audit; not run on non-security diffs. **siege is warden's own native leg on its own CVSS scale** (disjunction-of-native-gates, a LOCKED decision). warden sieges **twice**, **coverage-equal to build's two sieges (position redistributed across the two passes)**: warden's own siege leg at step-1 HEAD (≈ build Step 5.5), and the QG red-team leg's internal siege auto-dispatch at `SHA_pre_redteam` (≈ build Step 6) — the QG leg is invoked so it **re-dispatches** its internal siege as build does (warden does **not** suppress it) (I-W4 / S-A) |
-| inquisitor | **always (unconditional)** — preserves build Phase 4 Step 4 coverage | conditional — `>1 changed file OR >1 top-level module touched` | any adversarial test `Result: FAIL` | heavy 5-dim fan-out. In the `full` set it stays unconditional so a single-file build does **not** lose the inquisitor pass it gets today; the diff-shape condition applies only standalone, where per-push cost matters |
+| inquisitor | **always (unconditional)** — preserves build Phase 4 Step 4 coverage | conditional — risk-aware predicate (escalators → run; pure-doc-only → skip; else `>1 changed file OR >1 top-level module`). See *Standalone inquisitor-inclusion predicate*. | any adversarial test `Result: FAIL` | heavy 5-dim fan-out. In the `full` set it stays unconditional so a single-file build does **not** lose the inquisitor pass it gets today; the standalone diff-shape trigger is the risk-aware *Standalone inquisitor-inclusion predicate* subsection (escalators force a run; a bounded pure-doc-only diff skips; else the retained reach clause), where per-push cost matters |
 
 temper and delve share the trio contract scale, so their two legs use one
 predicate; the other three keep their own. No leg's severity is converted into
@@ -51,7 +51,64 @@ the strongest orchestrator's review coverage on single-file builds. So the
 trigger is split by reviewer-set: **unconditional in `full`** (no build
 regression), **conditional (multi-file / cross-module) in `standalone`** where
 the per-push Opus fan-out cost is the dominant concern. T-W8 asserts the `full`
-behavior.
+behavior. Multi-file / cross-module is only block 3 of the richer standalone
+trigger — see the *Standalone inquisitor-inclusion predicate* subsection for the
+authoritative spec.
+
+### Standalone inquisitor-inclusion predicate
+
+**PURE-DOC — orchestrator-followed prose, never executed in CI.** This predicate
+decides whether the `standalone` reviewer-set runs inquisitor. It is evaluated by
+the orchestrator over the entry diff's git-observable signals; there is **no**
+classifier binary and no `gate_logic.py` (a forbidden non-goal). Its behavioral
+teeth defer to the install-gated live `/warden` pass (Acceptance Gate 2); CI pins
+only that each clause below is *present* (`scripts/check_warden_structure.py`). In
+the `full` reviewer-set inquisitor runs unconditionally and this predicate is
+never consulted (T-W8 / S3).
+
+Evaluated on the entry diff, in order (escalators dominate; strictly additive):
+
+1. **Escalators → run.** If any changed path matches the INTERFACE/API/SCHEMA glob set,
+   or matches the DEPENDENCY/lockfile glob set, or the diff has a binary or otherwise unparseable path
+   → **run inquisitor** (fail-safe: unknown → run).
+2. **Pure-doc bounded subtraction → skip.** Else if EVERY changed path is a PURE-DOC file
+   (`.md`/`.rst`/`.adoc`, any depth) → **skip inquisitor**.
+3. **Retained reach clause (today's behavior).** Else if >1 changed file OR >1 top-level module touched
+   → **run inquisitor**.
+4. **Else → skip inquisitor.**
+
+**INTERFACE/API/SCHEMA glob set:** `**/api/**`, `*.proto`, `openapi*`,
+`**/schema*`, `**/migrations/**`, `**/index.*`, `**/__init__.py`, `*.graphql`.
+
+**DEPENDENCY/lockfile glob set:** `**/package.json`, `**/*.lock`,
+`**/requirements*.txt`, `**/Cargo.toml`, `**/go.mod`, `**/pyproject.toml`.
+
+**PURE-DOC file** = a path whose extension is `.md`, `.rst`, or `.adoc`, matched at
+any depth (gitignore-style), **not** a `docs/**` catch-all. `.txt` is **deliberately
+excluded** (it names lockfiles / golden-data / config, not documentation-by-
+convention). A code file (e.g. `docs/conf.py`), a binary, or an interface authored
+under `docs/` is **not** a pure-doc file, so a diff containing one is not all-doc and
+does not take block 2.
+
+**Monotonicity (strictly additive).** The predicate only ever *adds* inquisitor runs
+relative to today's `>1 file OR >1 module` clause (blocks 1 + 3 are a superset of it)
+or *removes* a run for a provably-safe all-doc diff (block 2). A single-file
+non-escalator code diff still skips exactly as today (block 4); no input that ran
+inquisitor under the old clause now skips it.
+
+**Residual risk.** (a) *Escalator over-match:* several escalator globs swallow common
+docs paths — `**/api/**` catches `docs/api/x.md`, `**/index.*` catches `index.md`,
+`**/schema*` catches `schema.md`, `openapi*` catches `openapi.md`. Because escalators
+are evaluated **first and dominate**, the pure-doc skip fires on a **narrower** slice
+than the headline "all-docs → skip" implies. The direction is **safe**
+(over-inclusive → more inquisitor runs, never fewer); for `openapi.md`/`schema.md`
+the run is **intended** (an interface authored as markdown is not a doc). The glob
+list is a tunable, not a correctness gate. (b) *SKILL.md-as-behavior:* a multi-file
+all-`.md` diff (e.g. an all-SKILL.md change) skips inquisitor via block 2 — safe
+because routing/structure regressions in this repo are caught by
+`check_warden_structure.py` / selection-evals and the always-on floor
+(temper/delve/red-team), not by inquisitor's executable cross-component tests, which
+have no target in an all-docs diff.
 
 ## Fix behavior
 
@@ -388,7 +445,7 @@ pass).** If a reviewer sub-dispatch **dies** (crashes, times out, or returns no
 parseable receipt), warden **surfaces the failed leg and returns `BLOCKED`**
 (fail-closed — **an unrun gate is not a pass**), never silently drops it. A
 **condition-skipped** leg (siege on a non-security diff, standalone-inquisitor on a
-single-file diff) is **not** an "unrun gate" for this rule: only a leg that was
+single-file **non-escalator code** diff) is **not** an "unrun gate" for this rule: only a leg that was
 *supposed to run* and died triggers the fail-closed BLOCK; a correctly
 condition-skipped leg is a **normal PASS input, not a failure** (M5).
 
@@ -629,13 +686,47 @@ The boundary is asserted by selection-eval prompts in `skills/skill-selection-ev
   `reviewer-set` parameter while context is present (S3); the whole-context-omitted case
   (standalone finish) is a non-regression (M-e). See §API Surface.
 
+**Predicate invariants (INV-P namespace — the standalone inquisitor-inclusion predicate,
+distinct from `I-W9`).** *Design-reconciliation note:* the design's "New T-W obligations
+for INV-P7..INV-P10" is realized here as this INV-P invariants block, **not** as new
+numbered `T-Wxx:` obligations — `T-W3` is the only `T-W` entry rewritten, and no `T-W`
+numbers are added.
+
+*Checkable by inspection:*
+- INV-P1: the predicate is orchestrator-followed prose only — no classifier binary, no
+  `gate_logic.py`.
+- INV-P2: strictly additive — it only adds inquisitor runs (escalators) or removes one for
+  a provably-safe all-doc diff; it never narrows today's `>1 file OR >1 module` reach.
+- INV-P3: the retained reach clause `>1 changed file OR >1 top-level module` is preserved
+  verbatim as block 3.
+- INV-P4: escalators are evaluated first and dominate the pure-doc skip (block order
+  1 → 2 → 3 → 4).
+- INV-P5: this predicate applies to the `standalone` reviewer-set only; `full` keeps
+  inquisitor unconditional (T-W8 / S3).
+- INV-P6: the fail-safe direction is toward running — an unknown / binary / unparseable
+  path runs inquisitor, never skips it.
+
+*Behavioral — teeth deferred to the live pass (Acceptance Gate 2), not executed in CI:*
+- INV-P7: monotonicity — for a fixed file count, flipping a path from non-signal to an
+  escalator signal flips skip → run (never the reverse).
+- INV-P8: pure-doc bounded — inquisitor is skipped only when EVERY changed path is a
+  pure-doc (`.md`/`.rst`/`.adoc`, any depth) file with no escalator; a code/binary sibling
+  or an escalator defeats the skip.
+- INV-P9: binary/unparseable fail-safe — a binary or otherwise unparseable path forces a
+  run (documentation-only clause; in every constructible reachable case it is subsumed by
+  block 3, so it retains no isolating CI fixture — deferred to the live pass).
+- INV-P10: escalator escalation — a single-file API-glob or dependency-glob diff that
+  skipped under the old clause now runs inquisitor.
+
 **Requires tests:**
 - T-W1: a diff that trips exactly one native gate (e.g. red-team Significant, everything
   else clean) yields `BLOCKED`.
 - T-W2: siege runs on a security-surface diff and is skipped on a non-security diff
   (conditional trigger).
-- T-W3: in the **standalone** reviewer-set, inquisitor runs on a multi-file diff (`>1
-  changed file OR >1 top-level module`) and is skipped on a single-file diff.
+- T-W3: in the **standalone** reviewer-set, inquisitor runs when an escalator matches
+  (interface/API/schema glob, dependency/lockfile glob, or a binary/unparseable path), is
+  skipped when EVERY changed path is a pure-doc file with no escalator, and otherwise falls
+  to the retained reach clause (`>1 changed file OR >1 top-level module` → run, else skip).
 - T-W4: the **double-temper** (build Phase-4 temper + finish Step-2 temper) is killed —
   finish no longer re-runs temper after Phase 4. (warden still invokes temper several times
   *internally* — step-1 temper and the scoped re-temper after each later fixer; the step-4
@@ -703,7 +794,7 @@ The boundary is asserted by selection-eval prompts in `skills/skill-selection-ev
 - **A reviewer sub-dispatch dies**: warden surfaces the failed leg and returns `BLOCKED`
   (fail-closed — an unrun gate is not a pass), never silently drops it. A
   **condition-skipped** leg (siege on a non-security diff, standalone-inquisitor on a
-  single-file diff) is **not** an "unrun gate" for this rule — only a leg that was
+  single-file **non-escalator code** diff) is **not** an "unrun gate" for this rule — only a leg that was
   *supposed to run* and died triggers the fail-closed BLOCK; a correctly skipped conditional
   leg is a normal PASS input, not a failure (M5).
 - **quality-gate stagnation/escalation on the red-team leg**: warden propagates the
