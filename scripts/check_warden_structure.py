@@ -788,7 +788,10 @@ def selftest() -> int:
     for label, sub in REQUIRED_SUBSTRINGS.items():
         bad = _GOOD_SAMPLE.replace(sub, "‹removed›")
         errs = check_text(bad)
-        assert any(label in e for e in errs), (
+        # Exact-match, not loose `label in e`: labels nest (e.g. "…T-W1" ⊂
+        # "…T-W11"), so a loose check could let one pin's RED pass on another
+        # pin's error. Match the precise error string check_text builds at :487.
+        assert any(e == f"missing {label}: `{sub}`" for e in errs), (
             f"removing {label!r} (`{sub}`) should flag it, got: {errs}")
 
     # 2b. Per-clause RED for the OR clauses: removing EVERY alternative flags the
@@ -798,7 +801,10 @@ def selftest() -> int:
         for alt in alts:
             bad = bad.replace(alt, "‹removed›")
         errs = check_text(bad)
-        assert any(label in e for e in errs), (
+        # Exact-match against the OR-clause error string built at :490 — same
+        # nesting-safety rationale as the REQUIRED_SUBSTRINGS loop above.
+        assert any(
+            e == f"missing {label}: none of {list(alts)} present" for e in errs), (
             f"removing all of {list(alts)} for {label!r} should flag it, "
             f"got: {errs}")
 
