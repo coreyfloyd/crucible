@@ -97,6 +97,19 @@ REQUIRED_SUBSTRINGS: dict[str, str] = {
     "reviewer leg: inquisitor": "inquisitor",
     "reviewer-set parameter (full | standalone)": "reviewer-set: full | standalone",
     "inquisitor unconditional in full set": "unconditional",
+    # Task (warden risk-tier) — standalone inquisitor risk-aware predicate, #466.
+    # Each pin proves a predicate CLAUSE EXISTS in SKILL.md (structural teeth only;
+    # the predicate is never executed in CI — see design AC3 / §Live-validation).
+    "standalone inquisitor retained reach clause":
+        ">1 changed file OR >1 top-level module",
+    "standalone inquisitor interface escalator": "INTERFACE/API/SCHEMA glob set",
+    "standalone inquisitor dependency escalator": "DEPENDENCY/lockfile glob set",
+    "standalone inquisitor binary fail-safe": "binary or otherwise unparseable path",
+    "standalone inquisitor pure-doc skip": "EVERY changed path is a PURE-DOC file",
+    # Structural teeth for the previously-unpinned INV-P invariants block (design
+    # L89-104): anchors that the invariants block EXISTS, not just the clause literals.
+    # (Monotonicity/residual-risk paragraphs carry no pinned literal — inspection-only.)
+    "standalone inquisitor predicate INV-P block": "INV-P8",
     # Task 3 — fix behavior (Universal per-leg residual commit + clean-tree
     # precondition), design L125-278.
     "per-leg residual commit primitive (M-c)": "git add -A && git commit",
@@ -516,6 +529,20 @@ The "Runs" column is split by reviewer-set: full | standalone.
 | siege | conditional | conditional | Critical>0 | 6-agent Opus audit |
 | inquisitor | always (unconditional) | conditional | any FAIL | stays unconditional in full |
 
+## Standalone inquisitor-inclusion predicate
+
+Evaluated on the entry diff, in order (escalators dominate; strictly additive):
+1. any changed path matches the INTERFACE/API/SCHEMA glob set, or the
+   DEPENDENCY/lockfile glob set, or the diff has a binary or otherwise unparseable path
+   → run inquisitor (fail-safe: unknown → run).
+2. else if EVERY changed path is a PURE-DOC file (`.md`/`.rst`/`.adoc` by extension,
+   any depth; no `docs/**` catch-all) → skip inquisitor.
+3. else if >1 changed file OR >1 top-level module touched → run inquisitor.
+4. else → skip inquisitor.
+
+Predicate invariants: INV-P1..INV-P10 (INV-P8 = pure-doc bounded; escalator
+over-match disclosed in residual-risk).
+
 ## Fix behavior
 
 temper edits the working tree but never commits. The `git stash create` temper
@@ -761,7 +788,10 @@ def selftest() -> int:
     for label, sub in REQUIRED_SUBSTRINGS.items():
         bad = _GOOD_SAMPLE.replace(sub, "‹removed›")
         errs = check_text(bad)
-        assert any(label in e for e in errs), (
+        # Exact-match, not loose `label in e`: labels nest (e.g. "…T-W1" ⊂
+        # "…T-W11"), so a loose check could let one pin's RED pass on another
+        # pin's error. Match the precise error string check_text builds at :487.
+        assert any(e == f"missing {label}: `{sub}`" for e in errs), (
             f"removing {label!r} (`{sub}`) should flag it, got: {errs}")
 
     # 2b. Per-clause RED for the OR clauses: removing EVERY alternative flags the
@@ -771,7 +801,10 @@ def selftest() -> int:
         for alt in alts:
             bad = bad.replace(alt, "‹removed›")
         errs = check_text(bad)
-        assert any(label in e for e in errs), (
+        # Exact-match against the OR-clause error string built at :490 — same
+        # nesting-safety rationale as the REQUIRED_SUBSTRINGS loop above.
+        assert any(
+            e == f"missing {label}: none of {list(alts)} present" for e in errs), (
             f"removing all of {list(alts)} for {label!r} should flag it, "
             f"got: {errs}")
 

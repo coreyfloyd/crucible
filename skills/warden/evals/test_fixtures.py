@@ -31,7 +31,13 @@ class TestFixtureIntegrity(unittest.TestCase):
                          "tw2-siege-nonsecurity", "tw3-standalone-multifile",
                          "tw3-standalone-singlefile", "tw8-full-singlefile",
                          "tw5-marker-temper-fix", "tw9-residual-nonfix",
-                         "tw11-delve-block"):
+                         "tw11-delve-block",
+                         "tw3-doc-only-multifile", "tw3-doc-nested-depth",
+                         "tw3-single-file-api", "tw3-single-file-dep",
+                         "tw3-openapi-md", "tw3-code-under-docs",
+                         "tw3-mixed-binary-text",
+                         "tw3-pair-api-base", "tw3-pair-api-signal",
+                         "tw3-pair-dep-base", "tw3-pair-dep-signal"):
             self.assertIn(required, names)
 
     def test_every_ground_truth_has_a_nonempty_expected(self):
