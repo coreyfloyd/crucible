@@ -82,7 +82,13 @@ AND a forbidden `fix:`-prefixed leg subject), so `score` is not a rubber stamp.
 Coverage maps to warden's test obligations: `tw1` (T-W1 one-gate-trip → BLOCKED),
 `tw6` (T-W6 clean → PASS + T-W2 siege-present + T-W8 inquisitor + T-W5 marker),
 `tw2` (T-W2 siege skipped on non-security), `tw3-*` (T-W3 standalone inquisitor
-conditional), `tw8` (T-W8 full inquisitor unconditional), `tw5` (T-W5 marker shape),
+conditional — the two original triads `tw3-standalone-{multi,single}file` plus the 11
+risk-aware-predicate fixtures: 7 point (`tw3-doc-only-multifile`, `tw3-doc-nested-depth`,
+`tw3-single-file-api`, `tw3-single-file-dep`, `tw3-openapi-md`, `tw3-code-under-docs`,
+`tw3-mixed-binary-text`) + 4 paired for INV-P7 monotonicity
+(`tw3-pair-{api,dep}-{base,signal}`); these are schema-gated only, their behavioral
+classification deferred to the live pass), `tw8` (T-W8 full inquisitor unconditional),
+`tw5` (T-W5 marker shape),
 `tw9` (T-W9 mechanical: non-`fix:` residual subjects + empty terminating range),
 `tw11` (T-W11 delve surfaced-not-applied → BLOCK). T-W9's live commit-ordering and T-W14
 are inherently live and are routed to Acceptance-Gate-2, **not** scored here.
