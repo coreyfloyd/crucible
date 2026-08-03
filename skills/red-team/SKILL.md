@@ -60,7 +60,12 @@ digraph red_team_loop {
 1. **Fresh reviewer every round** — dispatch a NEW subagent each time. Never pass prior findings to the next reviewer. Each reviewer sees the artifact cold.
 2. **Stagnation = escalation** — use weighted scoring to detect stagnation (see below). If the weighted score does not strictly decrease, stop and escalate to user with full findings from both rounds.
 3. **Architectural concerns bypass the loop** — immediate escalation regardless of round or progress.
-4. **No round cap** — loop as long as each round makes progress. The caller (e.g., `crucible:quality-gate`) may impose a global safety limit.
+4. **Round cap: 2 (Corey, 2026-08-02 — fork-local override of upstream's "no cap").** Max
+   two reviewer rounds total. After round 2, do NOT dispatch a third reviewer regardless of
+   score progression: apply fixes for round-2 findings, then escalate the remaining state to
+   the user (findings + what was fixed unverified). Matches the standing quality-gate
+   max-2-rounds rule — findings get marginal after 2. A caller (e.g. `crucible:quality-gate`)
+   may impose a LOWER limit, never a higher one.
 5. **Only Fatal and Significant count** — Minor observations are logged but don't count toward stagnation and don't trigger fix rounds.
 
 ### Stagnation Detection
